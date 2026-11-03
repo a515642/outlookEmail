@@ -1,7 +1,7 @@
         /* 响应式 */
         @media (max-width: 1200px) {
             .group-panel {
-                width: 180px;
+                width: 240px;
             }
 
             .account-panel {
@@ -15,7 +15,7 @@
 
         @media (max-width: 1024px) {
             .group-panel {
-                width: 160px;
+                width: 220px;
             }
 
             .account-panel {
@@ -157,14 +157,13 @@
             }
 
             .group-actions {
-                opacity: 1;
-                pointer-events: auto;
+                display: flex;
                 position: static;
                 transform: none;
             }
 
             .group-item:has(.group-action-btn):hover .group-count {
-                opacity: 1;
+                display: block;
             }
 
             .group-row-2 {
