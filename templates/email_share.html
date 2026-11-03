@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() if csrf_token is defined else '' }}">
-    <title>Outlook 共享邮箱</title>
+    <title>{{ 'Outlook 分组共享' if share_kind == 'group' else 'Outlook 共享邮箱' }}</title>
     <link rel="icon" href="{{ url_for('favicon') }}" type="image/svg+xml">
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/email-share.css') }}">
 </head>
 
-<body data-share-token="{{ share_token }}" data-share-status="{{ share_status }}">
+<body data-share-token="{{ share_token }}" data-share-status="{{ share_status }}" data-share-kind="{{ share_kind | default('email') }}" data-group-name="{{ group_name | default('') }}">
     <div class="app-container">
         <!-- Header -->
         <header class="app-header">
@@ -30,13 +30,16 @@
                         <path d="M6 8H10V16H6V8Z" fill="white"/>
                         <path d="M14 10H16V14H14V10Z" fill="white"/>
                     </svg>
-                    <span class="logo-text">Outlook <span class="badge share-badge">共享链接</span></span>
+                    <span class="logo-text">Outlook <span class="badge share-badge">{{ '分组共享' if share_kind == 'group' else '共享链接' }}</span></span>
                 </div>
             </div>
             <div class="header-center">
                 <div class="user-pill" id="copyEmailPill" title="点击复制邮箱">
                     <div class="avatar user-avatar" id="headerUserAvatar">?</div>
-                    <span class="user-email" id="shareEmailTitle">{{ account_email or '分享链接' }}</span>
+                    <span class="share-identity">
+                        <span class="user-email" id="shareEmailTitle">{{ account_email or group_name or '分享链接' }}</span>
+                        <span class="share-subtitle" id="shareGroupSubtitle"{% if share_kind != 'group' or not account_email %} hidden{% endif %}>分组：{{ group_name }}</span>
+                    </span>
                     <i data-lucide="copy" class="copy-icon"></i>
                 </div>
             </div>
@@ -58,7 +61,7 @@
         </header>
 
         <!-- Main Body -->
-        <div class="app-body" id="appBody"{% if share_status == 'access_code_required' %} style="display: none;"{% endif %}>
+        <div class="app-body" id="appBody"{% if share_status in ('access_code_required', 'mailbox_required') %} style="display: none;"{% endif %}>
             <!-- Sidebar / Folder Navigation -->
             <nav class="app-sidebar">
                 <div class="sidebar-header">
@@ -139,7 +142,7 @@
                     <i data-lucide="lock-keyhole" class="error-icon"></i>
                 </div>
                 <h2>请输入访问码</h2>
-                <p>此邮箱分享已设置访问码，请向分享者获取后输入。</p>
+                <p>{{ '此分组分享已设置访问码，请向分享者获取后输入。' if share_kind == 'group' else '此邮箱分享已设置访问码，请向分享者获取后输入。' }}</p>
                 <form class="share-access-form" id="shareAccessCodeForm">
                     <label for="shareAccessCodeInput">访问码</label>
                     <input id="shareAccessCodeInput" type="text" minlength="4" maxlength="32" pattern="[A-Za-z0-9]{4,32}" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入访问码（区分大小写）" aria-describedby="shareAccessCodeError" required>
@@ -149,6 +152,25 @@
             </div>
         </div>
 
+        {% if share_kind == 'group' %}
+        <!-- Group mailbox verification overlay -->
+        <div class="overlay-screen" id="shareMailboxState" hidden>
+            <div class="error-card">
+                <div class="error-icon-wrapper">
+                    <i data-lucide="at-sign" class="error-icon"></i>
+                </div>
+                <h2>验证邮箱</h2>
+                <p>请输入分组「<span id="shareMailboxGroupName">{{ group_name }}</span>」内的完整邮箱地址以查看邮件。</p>
+                <form class="share-access-form" id="shareMailboxForm">
+                    <label for="shareMailboxInput">邮箱地址</label>
+                    <input id="shareMailboxInput" type="email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="name@example.com" aria-describedby="shareMailboxError" required>
+                    <p id="shareMailboxError" role="alert" hidden></p>
+                    <button id="shareMailboxSubmit" type="submit">确认查看</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Invalid Link Screen Overlay -->
         <div class="overlay-screen" id="shareInvalidState" hidden>
             <div class="error-card">
@@ -156,7 +178,7 @@
                     <i data-lucide="link-2-off" class="error-icon"></i>
                 </div>
                 <h2 id="shareInvalidTitle">分享链接不可用</h2>
-                <p>该分享链接可能已过期、被撤销，或者此邮箱账号已失效。请联系邮箱所有者重新获取分享链接。</p>
+                <p>{{ '该分组分享链接可能已过期、被撤销，或者分组已被删除。请联系分享者重新获取分享链接。' if share_kind == 'group' else '该分享链接可能已过期、被撤销，或者此邮箱账号已失效。请联系邮箱所有者重新获取分享链接。' }}</p>
             </div>
         </div>
     </div>

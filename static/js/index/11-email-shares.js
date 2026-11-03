@@ -407,7 +407,7 @@
             }
         }
 
-        function showEmailShareManagementModal() {
+        function showEmailShareManagementModal(tab = 'email') {
             // Reset filter controls
             const filterEmail = document.getElementById('shareFilterEmail');
             if (filterEmail) filterEmail.value = '';
@@ -419,7 +419,11 @@
             currentSortDir = 'desc';
 
             showModal('emailShareManagementModal');
-            loadEmailShares();
+            if (typeof switchShareManagementTab === 'function') {
+                switchShareManagementTab(tab === 'group' ? 'group' : 'email');
+            } else {
+                loadEmailShares();
+            }
         }
 
         async function cancelEmailShare(shareId) {

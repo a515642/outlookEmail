@@ -396,6 +396,7 @@ def delete_group_tree(group_id: int) -> Dict[str, Any]:
 
         placeholders = ','.join('?' * len(descendant_ids))
         db.execute(f'UPDATE accounts SET group_id = ? WHERE group_id IN ({placeholders})', [DEFAULT_GROUP_ID] + descendant_ids)
+        db.execute(f'DELETE FROM group_share_links WHERE group_id IN ({placeholders})', descendant_ids)
         delete_rows = db.execute(
             f'SELECT id FROM groups WHERE id IN ({placeholders}) ORDER BY level DESC, id DESC',
             descendant_ids

@@ -55,7 +55,9 @@ def has_email_share_access(share: Dict[str, Any]) -> bool:
 
 @app.after_request
 def disable_email_share_cache(response):
-    if request.path.startswith(('/share/email/', '/api/share/email/')):
+    if request.path.startswith((
+        '/share/email/', '/api/share/email/', '/share/group/', '/api/share/group/'
+    )):
         response.headers['Cache-Control'] = 'no-store'
     return response
 

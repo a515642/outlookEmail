@@ -307,6 +307,13 @@ button {
     font-size: 11px;
 }
 
+.share-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
 .user-email {
     font-size: 13px;
     font-weight: 500;
@@ -314,6 +321,19 @@ button {
     overflow: hidden;
     text-overflow: ellipsis;
     color: var(--text-secondary);
+}
+
+.share-subtitle {
+    font-size: 10px;
+    line-height: 1.2;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.share-subtitle[hidden] {
+    display: none;
 }
 
 .status-indicator {
@@ -1150,7 +1170,8 @@ button {
     cursor: wait;
 }
 
-.share-access-form #shareAccessCodeError {
+.share-access-form #shareAccessCodeError,
+.share-access-form #shareMailboxError {
     color: var(--danger);
 }
 
