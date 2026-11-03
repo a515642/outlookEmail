@@ -855,6 +855,77 @@ def api_external_get_accounts():
     })
 
 
+@app.route('/api/external/accounts/exists', methods=['GET'])
+@csrf_exempt
+@api_key_required
+def api_external_account_exists_in_group():
+    """对外 API：查询完整邮箱是否存在于指定分组"""
+    raw_email = str(request.args.get('email', '') or '').strip()
+    if not raw_email:
+        return jsonify({'success': False, 'error': '缺少 email 参数'}), 400
+    normalized_email = normalize_email_address(raw_email)
+    if '@' not in normalized_email:
+        return jsonify({'success': False, 'error': 'email 格式无效'}), 400
+
+    group_id = request.args.get('group_id', type=int)
+    if group_id is None or group_id <= 0:
+        return jsonify({'success': False, 'error': '缺少 group_id 或 group_id 无效'}), 400
+    group = get_group_by_id(group_id)
+    if not group:
+        return jsonify({'success': False, 'error': f'分组 {group_id} 不存在'}), 404
+
+    include_descendants = parse_bool_flag(request.args.get('include_descendants'), False)
+    include_aliases = parse_bool_flag(request.args.get('include_aliases'), False)
+    group_ids = get_descendant_group_ids(group_id) if include_descendants else [group_id]
+    placeholders = ','.join('?' * len(group_ids))
+
+    db = get_db()
+    account_row = db.execute(f'''
+        SELECT a.*, g.name AS group_name
+        FROM accounts a
+        LEFT JOIN groups g ON a.group_id = g.id
+        WHERE LOWER(a.email) = ? AND a.group_id IN ({placeholders})
+        LIMIT 1
+    ''', [normalized_email] + group_ids).fetchone()
+    matched_alias = ''
+    if account_row is None and include_aliases:
+        account_row = db.execute(f'''
+            SELECT a.*, g.name AS group_name, aa.alias_email AS matched_alias
+            FROM account_aliases aa
+            JOIN accounts a ON a.id = aa.account_id
+            LEFT JOIN groups g ON a.group_id = g.id
+            WHERE LOWER(aa.alias_email) = ? AND a.group_id IN ({placeholders})
+            ORDER BY aa.id ASC
+            LIMIT 1
+        ''', [normalized_email] + group_ids).fetchone()
+        if account_row is not None:
+            matched_alias = str(account_row['matched_alias'] or '')
+
+    response = {
+        'success': True,
+        'exists': account_row is not None,
+        'requested_email': raw_email,
+        'normalized_email': normalized_email,
+        'group_id': group_id,
+        'group_name': str(group.get('name') or ''),
+        'include_descendants': include_descendants,
+        'include_aliases': include_aliases,
+        'matched_alias': matched_alias,
+        'account': None,
+    }
+    if account_row is not None:
+        response['account'] = {
+            'id': int(account_row['id']),
+            'email': str(account_row['email'] or ''),
+            'group_id': int(account_row['group_id']) if account_row['group_id'] is not None else None,
+            'group_name': str(account_row['group_name'] or '') if account_row['group_name'] is not None else '',
+            'status': str(account_row['status'] or ''),
+            'account_type': str(account_row['account_type'] or ''),
+            'provider': str(account_row['provider'] or ''),
+        }
+    return jsonify(response)
+
+
 @app.route('/api/external/accounts', methods=['POST'])
 @csrf_exempt
 @api_key_write_required
@@ -1878,6 +1949,7 @@ def api_get_account(account_id):
             'account_type': account.get('account_type', 'outlook'),
             'provider': account.get('provider', 'outlook'),
             'authorization_type': get_account_authorization_type(account),
+            'graph_token_scope': account.get('graph_token_scope', '') or '',
             'imap_host': account.get('imap_host', ''),
             'imap_port': account.get('imap_port', 993),
             'has_imap_password': bool(account.get('imap_password')),
@@ -1974,7 +2046,9 @@ def api_add_account():
         imap_port = int(data.get('imap_port', 993) or 993)
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'IMAP 端口无效'})
-    
+
+    graph_token_scope = normalize_graph_token_scope(data.get('graph_token_scope', ''))
+
     if not account_str:
         return jsonify({'success': False, 'error': '请输入账号信息'})
     
@@ -2005,6 +2079,7 @@ def api_add_account():
         proxy_url,
         fallback_proxy_url_1,
         fallback_proxy_url_2,
+        graph_token_scope,
     )
     added = result.get('added_count', 0)
     skipped_count = result.get('skipped_count', 0)
@@ -2064,6 +2139,10 @@ def api_update_account(account_id):
             return jsonify({'success': False, 'error': str(exc)})
     else:
         authorization_type = get_account_authorization_type(current_account)
+    graph_token_scope = (
+        normalize_graph_token_scope(data.get('graph_token_scope'))
+        if 'graph_token_scope' in data else None
+    )
     imap_host = (data.get('imap_host', '') or '').strip()
     imap_port = data.get('imap_port', 993)
     imap_password = data['imap_password'] if 'imap_password' in data else current_account.get('imap_password', '')
@@ -2119,7 +2198,7 @@ def api_update_account(account_id):
         account_id, email_addr, password, client_id, refresh_token, group_id, sort_order, remark, status,
         account_type, provider, imap_host, imap_port, imap_password, forward_enabled,
         proxy_url, fallback_proxy_url_1, fallback_proxy_url_2,
-        authorization_type
+        authorization_type, graph_token_scope
     ):
         cleaned_aliases = get_account_aliases(account_id)
         db = get_db()

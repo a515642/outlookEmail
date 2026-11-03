@@ -55,7 +55,9 @@ def has_email_share_access(share: Dict[str, Any]) -> bool:
 
 @app.after_request
 def disable_email_share_cache(response):
-    if request.path.startswith(('/share/email/', '/api/share/email/')):
+    if request.path.startswith((
+        '/share/email/', '/api/share/email/', '/share/group/', '/api/share/group/'
+    )):
         response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -163,6 +165,17 @@ def get_email_share_max_email_count(share: Dict[str, Any]) -> Optional[int]:
     return None if error else max_email_count
 
 
+def get_email_share_access_code(share: Dict[str, Any]) -> str:
+    encrypted = str(share.get('access_code_encrypted') or '')
+    if not encrypted:
+        return ''
+    try:
+        return decrypt_data(encrypted)
+    except Exception:
+        app.logger.warning('Failed to decrypt email share access code for share id=%s', share.get('id'))
+        return ''
+
+
 def serialize_email_share_row(row: Any) -> Dict[str, Any]:
     share = dict(row)
     status = get_email_share_status(share)
@@ -170,9 +183,14 @@ def serialize_email_share_row(row: Any) -> Dict[str, Any]:
     share_url = ''
     try:
         token = decrypt_email_share_token(share)
-        share_url = build_email_share_url(token)
     except Exception:
         app.logger.warning('Failed to decrypt email share token for share id=%s', share.get('id'))
+    if token:
+        try:
+            share_url = build_email_share_url(token)
+        except Exception:
+            app.logger.warning('Failed to build email share URL for share id=%s', share.get('id'))
+    access_code = get_email_share_access_code(share)
 
     return {
         'id': share.get('id'),
@@ -188,6 +206,8 @@ def serialize_email_share_row(row: Any) -> Dict[str, Any]:
         'status': status,
         'share_url': share_url,
         'requires_access_code': bool(share.get('access_code_hash')),
+        'access_code': access_code,
+        'access_code_available': bool(access_code),
     }
 
 
@@ -466,20 +486,26 @@ def collect_email_share_candidate_page(
 
 
 def resolve_email_share_visible_messages(
-    account: Dict[str, Any], max_email_count: int
+    account: Dict[str, Any], max_email_count: int, folder: Optional[str] = None
 ) -> Dict[str, Any]:
+    """解析受限分享可见的最新邮件。
+
+    传入 ``folder`` 时只抓取该文件夹，数量上限按文件夹分别生效，这样分享页
+    进入收件箱不必为垃圾邮件付出请求开销；不传时保持跨文件夹合并的旧行为。
+    """
+    folder_order = (folder,) if folder else EMAIL_SHARE_ALLOWED_FOLDER_ORDER
     candidates = []
     methods = []
     seen_candidates = set()
     folder_states = {
-        folder: {
+        folder_name: {
             'skip': 0,
             'fetched_count': 0,
             'has_more': False,
             'oldest_date': None,
             'request_method': None,
         }
-        for folder in EMAIL_SHARE_ALLOWED_FOLDER_ORDER
+        for folder_name in folder_order
     }
     missing_marker = object()
     previous_disable_record = account.get('_disable_authorization_type_record', missing_marker)
@@ -487,7 +513,7 @@ def resolve_email_share_visible_messages(
     stable_ids_context_token = email_share_stable_ids_context.set(True)
 
     try:
-        for folder in EMAIL_SHARE_ALLOWED_FOLDER_ORDER:
+        for folder in folder_order:
             result = fetch_account_emails(
                 account, folder, 0, EMAIL_SHARE_CANDIDATE_PAGE_SIZE
             )
@@ -520,7 +546,7 @@ def resolve_email_share_visible_messages(
             if len(sorted_candidates) >= max_email_count and cutoff_date is None:
                 return email_share_visible_messages_error()
             folders_to_fetch = [
-                folder for folder in EMAIL_SHARE_ALLOWED_FOLDER_ORDER
+                folder for folder in folder_order
                 if folder_states[folder]['has_more']
                 and (
                     cutoff_date is None
@@ -581,7 +607,7 @@ def fetch_limited_email_share_emails(
     if skip >= max_email_count:
         return {'success': True, 'emails': [], 'method': '', 'has_more': False}
 
-    visible_result = resolve_email_share_visible_messages(account, max_email_count)
+    visible_result = resolve_email_share_visible_messages(account, max_email_count, folder)
     if not visible_result.get('success'):
         return visible_result
 
@@ -636,9 +662,9 @@ def api_create_email_share():
         '''
         INSERT INTO email_share_links (
             account_id, token_hash, token_encrypted, expires_at, never_expires, max_email_count,
-            access_code_hash
+            access_code_hash, access_code_encrypted
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             int(account['id']),
@@ -648,6 +674,7 @@ def api_create_email_share():
             1 if never_expires else 0,
             max_email_count,
             hash_password(access_code) if access_code else None,
+            encrypt_data(access_code) if access_code else None,
         )
     )
     db.commit()
@@ -886,7 +913,7 @@ def api_email_share_get_email_detail(token, message_id):
     id_mode = normalize_email_share_message_id_mode(request.args.get('id_mode'))
     max_email_count = get_email_share_max_email_count(share)
     if max_email_count is not None:
-        visible_result = resolve_email_share_visible_messages(account, max_email_count)
+        visible_result = resolve_email_share_visible_messages(account, max_email_count, folder)
         if not visible_result.get('success'):
             return jsonify(visible_result)
         visible_email = find_email_share_visible_message(

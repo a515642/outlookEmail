@@ -63,7 +63,7 @@
 
         /* 分组面板 */
         .group-panel {
-            width: 200px;
+            width: 280px;
             background-color: var(--skin-surface-muted);
             border-right: 1px solid var(--skin-border);
             display: flex;
@@ -331,7 +331,7 @@
         }
 
         .group-item:has(.group-action-btn):hover .group-count {
-            opacity: 0;
+            display: none;
         }
 
         .group-id-badge {
@@ -357,22 +357,14 @@
         }
 
         .group-actions {
-            position: absolute;
-            right: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            display: flex;
+            display: none;
+            align-items: center;
             gap: 4px;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s;
-            background-color: inherit;
-            padding-left: 8px;
+            flex-shrink: 0;
         }
 
         .group-item:hover .group-actions {
-            opacity: 1;
-            pointer-events: auto;
+            display: flex;
         }
 
         .group-action-btn {

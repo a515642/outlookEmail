@@ -1,5 +1,11 @@
 (function () {
     const token = document.body.dataset.shareToken || '';
+    const shareKind = document.body.dataset.shareKind || 'email';
+    const isGroupShare = shareKind === 'group';
+    const apiBase = isGroupShare
+        ? `/api/share/group/${encodeURIComponent(token)}`
+        : `/api/share/email/${encodeURIComponent(token)}`;
+    let groupName = document.body.dataset.groupName || '';
     let currentFolder = 'inbox';
     let currentEmails = [];
     let currentSkip = 0;
@@ -39,10 +45,16 @@
         }
     }
 
+    function hideMailboxPrompt() {
+        const mailboxState = document.getElementById('shareMailboxState');
+        if (mailboxState) mailboxState.hidden = true;
+    }
+
     function showInvalid(message) {
         isShareReady = false;
         const accessCodeState = document.getElementById('shareAccessCodeState');
         if (accessCodeState) accessCodeState.hidden = true;
+        hideMailboxPrompt();
         const appBody = document.getElementById('appBody');
         if (appBody) appBody.style.display = 'none';
         
@@ -59,6 +71,7 @@
         isShareReady = true;
         const accessCodeState = document.getElementById('shareAccessCodeState');
         if (accessCodeState) accessCodeState.hidden = true;
+        hideMailboxPrompt();
         const invalid = document.getElementById('shareInvalidState');
         if (invalid) invalid.hidden = true;
 
@@ -74,10 +87,39 @@
         if (appBody) appBody.style.display = 'none';
         const invalid = document.getElementById('shareInvalidState');
         if (invalid) invalid.hidden = true;
+        hideMailboxPrompt();
         const accessCodeState = document.getElementById('shareAccessCodeState');
         if (accessCodeState) accessCodeState.hidden = false;
         setStatus('等待访问码', 'invalid');
         document.getElementById('shareAccessCodeInput')?.focus();
+        createLucideIcons();
+    }
+
+    function showMailboxPrompt(name) {
+        isShareReady = false;
+        if (name) groupName = name;
+        const appBody = document.getElementById('appBody');
+        if (appBody) appBody.style.display = 'none';
+        const invalid = document.getElementById('shareInvalidState');
+        if (invalid) invalid.hidden = true;
+        const accessCodeState = document.getElementById('shareAccessCodeState');
+        if (accessCodeState) accessCodeState.hidden = true;
+
+        const mailboxState = document.getElementById('shareMailboxState');
+        const groupNameEl = document.getElementById('shareMailboxGroupName');
+        if (groupNameEl) groupNameEl.textContent = groupName || '该分组';
+        if (mailboxState) mailboxState.hidden = false;
+
+        const titleElement = document.getElementById('shareEmailTitle');
+        if (titleElement && groupName) titleElement.textContent = groupName;
+        const headerAvatar = document.getElementById('headerUserAvatar');
+        if (headerAvatar) {
+            headerAvatar.textContent = getInitials(groupName);
+            headerAvatar.style.backgroundColor = getAvatarColor(groupName);
+        }
+
+        setStatus('等待验证邮箱', 'invalid');
+        document.getElementById('shareMailboxInput')?.focus();
         createLucideIcons();
     }
 
@@ -87,7 +129,11 @@
         const count = Number(maxEmailCount);
         const isLimited = Number.isInteger(count) && count > 0;
         hint.hidden = !isLimited;
-        hint.textContent = isLimited ? `仅显示收件箱和垃圾邮件中当前最新 ${count} 封邮件` : '';
+        hint.textContent = isLimited
+            ? (isGroupShare
+                ? `每个邮箱的收件箱和垃圾邮件分别仅显示各自最新 ${count} 封邮件`
+                : `收件箱和垃圾邮件分别仅显示各自最新 ${count} 封邮件`)
+            : '';
     }
 
     async function requestJson(url, options = {}) {
@@ -95,8 +141,11 @@
         const data = await response.json();
         if (!response.ok || data.success === false) {
             if (data.status === 'access_code_required') showAccessCodePrompt();
+            else if (data.status === 'mailbox_required') showMailboxPrompt(groupName);
             const error = new Error(data.error || '请求失败');
             error.status = data.status;
+            error.retryAfter = data.retry_after;
+            error.remainingAttempts = data.remaining_attempts;
             throw error;
         }
         return data;
@@ -364,7 +413,7 @@
         });
         
         try {
-            const data = await requestJson(`/api/share/email/${encodeURIComponent(token)}/emails?${params.toString()}`);
+            const data = await requestJson(`${apiBase}/emails?${params.toString()}`);
             const items = Array.isArray(data.emails) ? data.emails : [];
             currentMethod = data.remote_method || data.method || currentMethod;
             currentEmails = append ? currentEmails.concat(items) : items;
@@ -412,7 +461,7 @@
         if (email.id_mode) {
             params.set('id_mode', email.id_mode);
         }
-        return `/api/share/email/${encodeURIComponent(token)}/email/${encodeURIComponent(email.id)}?${params.toString()}`;
+        return `${apiBase}/email/${encodeURIComponent(email.id)}?${params.toString()}`;
     }
 
     function renderAttachments(attachments) {
@@ -617,35 +666,6 @@
         });
     }
 
-    function insertGithubLink() {
-        const headerRight = document.querySelector('.header-right');
-        if (!headerRight) return;
-        
-        let githubLink = headerRight.querySelector('.github-link');
-        const svgHtml = `
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="github-icon">
-                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
-            </svg>
-        `;
-        
-        if (!githubLink) {
-            githubLink = document.createElement('a');
-            githubLink.className = 'github-link';
-            githubLink.href = 'https://github.com/assast/outlookEmail';
-            githubLink.target = '_blank';
-            githubLink.rel = 'noopener noreferrer';
-            githubLink.setAttribute('aria-label', 'GitHub 仓库');
-            githubLink.innerHTML = svgHtml;
-            headerRight.appendChild(githubLink);
-        } else {
-            if (!githubLink.querySelector('svg')) {
-                githubLink.innerHTML = svgHtml;
-            }
-            // Move existing githubLink to the end of the container to keep it on the far right
-            headerRight.appendChild(githubLink);
-        }
-    }
-
     function showToast(message) {
         let toast = document.getElementById('shareToast');
         if (!toast) {
@@ -716,22 +736,47 @@
 
     async function loadShareContent() {
         try {
-            const status = await requestJson(`/api/share/email/${encodeURIComponent(token)}/status`);
-            
-            const titleElement = document.getElementById('shareEmailTitle');
-            if (titleElement) titleElement.textContent = status.email || '邮箱分享';
-            renderShareVisibilityHint(status.max_email_count);
+            const status = await requestJson(`${apiBase}/status`);
 
-            const headerAvatar = document.getElementById('headerUserAvatar');
-            if (headerAvatar) {
-                headerAvatar.textContent = getInitials(status.email);
-                headerAvatar.style.backgroundColor = getAvatarColor(status.email);
+            if (isGroupShare) {
+                groupName = status.group_name || groupName;
+                renderShareVisibilityHint(status.max_email_count);
+                if (status.requires_email) {
+                    showMailboxPrompt(groupName);
+                    return;
+                }
+
+                const titleElement = document.getElementById('shareEmailTitle');
+                if (titleElement) titleElement.textContent = status.email || '分组分享';
+                const subtitle = document.getElementById('shareGroupSubtitle');
+                if (subtitle) {
+                    subtitle.textContent = `分组：${groupName || status.group_name || ''}`;
+                    subtitle.hidden = !groupName;
+                }
+
+                const headerAvatar = document.getElementById('headerUserAvatar');
+                if (headerAvatar) {
+                    headerAvatar.textContent = getInitials(status.email);
+                    headerAvatar.style.backgroundColor = getAvatarColor(status.email);
+                }
+            } else {
+                const titleElement = document.getElementById('shareEmailTitle');
+                if (titleElement) titleElement.textContent = status.email || '邮箱分享';
+                renderShareVisibilityHint(status.max_email_count);
+
+                const headerAvatar = document.getElementById('headerUserAvatar');
+                if (headerAvatar) {
+                    headerAvatar.textContent = getInitials(status.email);
+                    headerAvatar.style.backgroundColor = getAvatarColor(status.email);
+                }
             }
-            
+
             showContent();
             await loadEmails();
         } catch (error) {
-            if (error.status !== 'access_code_required') showInvalid(error.message);
+            if (error.status !== 'access_code_required' && error.status !== 'mailbox_required') {
+                showInvalid(error.message);
+            }
         }
     }
 
@@ -744,7 +789,7 @@
         button.disabled = true;
         if (errorText) errorText.hidden = true;
         try {
-            await requestJson(`/api/share/email/${encodeURIComponent(token)}/verify`, {
+            await requestJson(`${apiBase}/verify`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -766,9 +811,43 @@
         }
     }
 
+    async function verifyMailbox(event) {
+        event.preventDefault();
+        const input = document.getElementById('shareMailboxInput');
+        const button = document.getElementById('shareMailboxSubmit');
+        const errorText = document.getElementById('shareMailboxError');
+        if (!input || !button || button.disabled) return;
+        button.disabled = true;
+        if (errorText) errorText.hidden = true;
+        try {
+            await requestJson(`${apiBase}/verify-email`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                },
+                body: JSON.stringify({ email: input.value.trim() })
+            });
+            input.value = '';
+            await loadShareContent();
+        } catch (error) {
+            if (['expired', 'revoked', 'invalid'].includes(error.status)) {
+                showInvalid(error.message);
+            } else if (errorText) {
+                let message = error.message;
+                if (Number.isInteger(error.remainingAttempts) && error.remainingAttempts > 0) {
+                    message += `（还可尝试 ${error.remainingAttempts} 次）`;
+                }
+                errorText.textContent = message;
+                errorText.hidden = false;
+            }
+        } finally {
+            button.disabled = false;
+        }
+    }
+
     // --- Setup Initialization ---
     async function initializeSharePage() {
-        insertGithubLink();
         setupTheme();
         setupSearch();
         setupScrollLoad();
@@ -783,6 +862,7 @@
 
     document.addEventListener('submit', (event) => {
         if (event.target.id === 'shareAccessCodeForm') verifyAccessCode(event);
+        else if (event.target.id === 'shareMailboxForm') verifyMailbox(event);
     });
 
     // --- Global Event Delegation ---

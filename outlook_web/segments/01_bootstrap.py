@@ -763,6 +763,7 @@ INDEX_JS_FILES = (
     'js/index/13-projects.js',
     'js/index/14-icloud.js',
     'js/index/15-forwarding.js',
+    'js/index/16-group-shares.js',
 )
 
 # GPTMail API 配置
@@ -1375,6 +1376,7 @@ def init_db():
             account_type TEXT DEFAULT 'outlook',
             provider TEXT DEFAULT 'outlook',
             authorization_type TEXT NOT NULL DEFAULT '',
+            graph_token_scope TEXT NOT NULL DEFAULT '',
             imap_host TEXT,
             imap_port INTEGER DEFAULT 993,
             imap_password TEXT,
@@ -1612,6 +1614,7 @@ def init_db():
             token_hash TEXT UNIQUE NOT NULL,
             token_encrypted TEXT NOT NULL,
             access_code_hash TEXT,
+            access_code_encrypted TEXT,
             expires_at TIMESTAMP,
             never_expires INTEGER NOT NULL DEFAULT 0,
             max_email_count INTEGER CHECK (
@@ -1638,6 +1641,42 @@ def init_db():
         cursor.execute('ALTER TABLE email_share_links ADD COLUMN max_email_count INTEGER')
     if 'access_code_hash' not in email_share_columns:
         cursor.execute('ALTER TABLE email_share_links ADD COLUMN access_code_hash TEXT')
+    if 'access_code_encrypted' not in email_share_columns:
+        cursor.execute('ALTER TABLE email_share_links ADD COLUMN access_code_encrypted TEXT')
+
+    # 创建分组分享链接表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS group_share_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            token_hash TEXT UNIQUE NOT NULL,
+            token_encrypted TEXT NOT NULL,
+            access_code_hash TEXT,
+            access_code_encrypted TEXT,
+            expires_at TIMESTAMP,
+            never_expires INTEGER NOT NULL DEFAULT 0,
+            max_email_count INTEGER CHECK (
+                max_email_count IS NULL OR (max_email_count BETWEEN 1 AND 50)
+            ),
+            revoked_at TIMESTAMP,
+            last_accessed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute("PRAGMA table_info(group_share_links)")
+    group_share_columns = [col[1] for col in cursor.fetchall()]
+    if 'access_code_encrypted' not in group_share_columns:
+        cursor.execute('ALTER TABLE group_share_links ADD COLUMN access_code_encrypted TEXT')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_group_share_links_group
+        ON group_share_links(group_id, created_at)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_group_share_links_status
+        ON group_share_links(revoked_at, expires_at, never_expires)
+    ''')
 
     # 创建审计日志表
     cursor.execute('''
@@ -1872,6 +1911,8 @@ def init_db():
         cursor.execute("ALTER TABLE accounts ADD COLUMN provider TEXT DEFAULT 'outlook'")
     if 'authorization_type' not in columns:
         cursor.execute("ALTER TABLE accounts ADD COLUMN authorization_type TEXT NOT NULL DEFAULT ''")
+    if 'graph_token_scope' not in columns:
+        cursor.execute("ALTER TABLE accounts ADD COLUMN graph_token_scope TEXT NOT NULL DEFAULT ''")
     if 'imap_host' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN imap_host TEXT')
     if 'imap_port' not in columns:

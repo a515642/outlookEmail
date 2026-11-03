@@ -367,6 +367,7 @@
                             <span class="group-name">${escapeHtml(groupName)}${isTempGroup ? ' ⚡' : ''}</span>
                             <span class="group-count">${count || 0}</span>
                             <div class="group-actions">
+                                ${!isTempGroup ? `<button class="group-action-btn" onclick="event.stopPropagation(); showCreateGroupShareModal(${group.id})" title="分享分组">🔗</button>` : ''}
                                 ${!isSystem ? `<button class="group-action-btn" onclick="event.stopPropagation(); editGroup(${group.id})" title="编辑">✏️</button>` : ''}
                                 ${!isDefault && !isSystem ? `<button class="group-action-btn" onclick="event.stopPropagation(); deleteGroup(${group.id})" title="删除">🗑️</button>` : ''}
                             </div>
@@ -2286,6 +2287,7 @@
             const refreshTokenGroup = document.getElementById('editRefreshToken')?.closest('.form-group');
             const authorizationTypeGroup = document.getElementById('editAuthorizationType')?.closest('.form-group');
             const authorizationTypeSelect = document.getElementById('editAuthorizationType');
+            const graphScopeGroup = document.getElementById('editGraphScopeGroup');
             const imapFields = document.getElementById('editImapFields');
             const customImapFields = document.getElementById('editCustomImapFields');
             const reauthorizeGroup = document.getElementById('editReauthorizeGroup');
@@ -2295,6 +2297,7 @@
             if (refreshTokenGroup) refreshTokenGroup.style.display = isOutlook ? '' : 'none';
             if (authorizationTypeGroup) authorizationTypeGroup.style.display = isOutlook ? '' : 'none';
             if (authorizationTypeSelect) authorizationTypeSelect.disabled = !isOutlook;
+            if (graphScopeGroup) graphScopeGroup.style.display = isOutlook ? '' : 'none';
             if (imapFields) imapFields.style.display = isOutlook ? 'none' : '';
             if (customImapFields) customImapFields.style.display = provider === 'custom' ? '' : 'none';
             if (reauthorizeGroup) reauthorizeGroup.style.display = isOutlook ? '' : 'none';
@@ -2316,6 +2319,7 @@
             const customHost = document.getElementById('importImapHost');
             const customPort = document.getElementById('importImapPort');
             const accountDefaultFields = document.querySelectorAll('#addAccountModal .import-account-default-field');
+            const graphScopeGroup = document.getElementById('importGraphScopeGroup');
             if (!hintEl || !inputEl) return;
 
             const isTempGroup = isTempImportGroup();
@@ -2332,6 +2336,7 @@
             });
 
             if (isTempGroup) {
+                if (graphScopeGroup) graphScopeGroup.style.display = 'none';
                 if (customImapSettings) customImapSettings.style.display = 'none';
                 const channel = channelSelect ? channelSelect.value : 'gptmail';
                 const isCloudflare = channel === 'cloudflare';
@@ -2380,6 +2385,7 @@
 
             const provider = providerSelect ? providerSelect.value : 'outlook';
             const isOutlook = provider === 'outlook';
+            if (graphScopeGroup) graphScopeGroup.style.display = isOutlook ? '' : 'none';
             if (customImapSettings) customImapSettings.style.display = provider === 'custom' ? '' : 'none';
             if (exampleEl) exampleEl.style.display = '';
 

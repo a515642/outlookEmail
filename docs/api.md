@@ -37,6 +37,7 @@
 | 方法 | 路径 | 鉴权 | 返回类型 | 说明 |
 | --- | --- | --- | --- | --- |
 | GET | `/api/external/accounts` | API Key | JSON | 获取普通邮箱账号列表 |
+| GET | `/api/external/accounts/exists` | API Key | JSON | 查询完整邮箱是否存在于指定分组（可选包含子分组、别名） |
 | GET | `/api/external/emails` | API Key | JSON | 获取指定邮箱邮件列表 |
 | POST | `/api/external/outlook/upload` | API Key | JSON | 上传 Outlook 邮箱账号密码到上传表（默认未授权，支持单条/批量） |
 | POST | `/api/external/accounts` | API Key（读写） | JSON | 批量导入正式邮箱账号（可指定分组、标签） |
@@ -467,6 +468,79 @@ curl -H "X-API-Key: your-api-key" \
 - 该接口只返回普通邮箱账号，不包含临时邮箱列表
 - 已隐藏密码、Refresh Token、IMAP 密码等敏感字段
 - 如需拉取某个邮箱的邮件列表，再调用 `/api/external/emails`
+
+### GET `/api/external/accounts/exists`
+
+查询一个完整邮箱是否存在于指定分组。只读权限（`readonly`）即可调用。
+
+#### 查询参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `email` | string | 是 | 完整邮箱地址，忽略首尾空格和大小写；必须包含 `@` |
+| `group_id` | int | 是 | 目标分组 ID，分组不存在返回 HTTP 404 |
+| `include_descendants` | bool | 否 | 是否同时匹配子分组，默认 `false`；`1` / `true` / `yes` / `on` 视为开启 |
+| `include_aliases` | bool | 否 | 主邮箱未命中时是否继续匹配账号别名，默认 `false` |
+
+#### 请求示例
+
+```bash
+curl -H "X-API-Key: your-api-key" \
+  "http://localhost:5000/api/external/accounts/exists?email=user@outlook.com&group_id=2"
+
+# 包含子分组
+curl -H "X-API-Key: your-api-key" \
+  "http://localhost:5000/api/external/accounts/exists?email=user@outlook.com&group_id=2&include_descendants=1"
+```
+
+#### 成功响应示例（存在）
+
+```json
+{
+  "success": true,
+  "exists": true,
+  "requested_email": "User@Outlook.com",
+  "normalized_email": "user@outlook.com",
+  "group_id": 2,
+  "group_name": "已使用",
+  "include_descendants": false,
+  "include_aliases": false,
+  "matched_alias": "",
+  "account": {
+    "id": 12,
+    "email": "User@Outlook.com",
+    "group_id": 2,
+    "group_name": "已使用",
+    "status": "active",
+    "account_type": "outlook",
+    "provider": "outlook"
+  }
+}
+```
+
+#### 成功响应示例（不存在）
+
+```json
+{
+  "success": true,
+  "exists": false,
+  "requested_email": "ghost@outlook.com",
+  "normalized_email": "ghost@outlook.com",
+  "group_id": 2,
+  "group_name": "已使用",
+  "include_descendants": false,
+  "include_aliases": false,
+  "matched_alias": "",
+  "account": null
+}
+```
+
+#### 返回说明
+
+- 邮箱不存在或不在目标分组内时返回 HTTP 200，`exists=false`，不是 404
+- `account.status` 可能是 `inactive`；本接口只判断存在性，不按启用状态过滤
+- `include_aliases=true` 且通过别名命中时，`matched_alias` 返回命中的别名，`account.email` 仍是主邮箱
+- 账号信息只返回非敏感字段，不包含密码、Refresh Token、IMAP 密码
 
 ### GET `/api/external/emails`
 
