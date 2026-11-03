@@ -27,6 +27,7 @@ def clear_external_write_fixtures(db):
     db.execute('DELETE FROM tags')
     db.execute('DELETE FROM audit_logs')
     db.execute("DELETE FROM groups WHERE name = '外部写入测试分组'")
+    db.execute("DELETE FROM groups WHERE name LIKE '存在性测试%'")
     db.commit()
 
 
@@ -566,6 +567,151 @@ class ExternalAccountBatchUpdateGroupRouteTests(ExternalAccountWriteTestBase):
         self.assertEqual(audit['resource_type'], 'accounts')
         self.assertEqual(audit['resource_id'], str(group_id))
         self.assertIn('对外 API', audit['details'])
+
+
+class ExternalAccountExistsInGroupTests(ExternalAccountWriteTestBase):
+    def setUp(self):
+        super().setUp()
+        self._set_permission('readwrite')
+        self.group_id = self._create_group('存在性测试主分组')
+        self.child_group_id = self._create_group('存在性测试子分组', parent_id=self.group_id)
+
+    def _create_group(self, name, parent_id=None):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            cursor = db.execute(
+                "INSERT INTO groups (name, description, color, sort_order, is_system, parent_id) "
+                "VALUES (?, '', '#123456', 999, 0, ?)",
+                (name, parent_id),
+            )
+            db.commit()
+            return int(cursor.lastrowid)
+
+    def _seed_account(self, email, group_id=None):
+        response = self._import_lines([self._outlook_line(email)], group_id=group_id or self.group_id)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return self._fetch_account_row(email)
+
+    def _exists(self, email, group_id, **params):
+        query = {'email': email, 'group_id': group_id}
+        query.update(params)
+        return self.client.get(
+            '/api/external/accounts/exists',
+            headers=self._headers(),
+            query_string=query,
+        )
+
+    def test_existing_email_in_group_returns_true(self):
+        row = self._seed_account('Exists@Outlook.com')
+        response = self._exists('  exists@outlook.com  ', self.group_id)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertTrue(payload['exists'])
+        self.assertEqual(payload['normalized_email'], 'exists@outlook.com')
+        self.assertEqual(payload['group_id'], self.group_id)
+        self.assertEqual(payload['matched_alias'], '')
+        self.assertEqual(payload['account']['id'], row['id'])
+        self.assertEqual(payload['account']['email'], 'Exists@Outlook.com')
+        self.assertEqual(payload['account']['group_id'], self.group_id)
+        self.assertEqual(payload['account']['status'], 'active')
+        self.assertNotIn('password', payload['account'])
+        self.assertNotIn('refresh_token', payload['account'])
+        self.assertNotIn('imap_password', payload['account'])
+
+    def test_email_in_other_group_returns_false(self):
+        self._seed_account('other-group@outlook.com', group_id=self.child_group_id)
+        response = self._exists('other-group@outlook.com', self.group_id)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertFalse(payload['exists'])
+        self.assertIsNone(payload['account'])
+
+    def test_nonexistent_email_returns_false(self):
+        response = self._exists('ghost@outlook.com', self.group_id)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()['exists'])
+
+    def test_descendants_excluded_by_default(self):
+        self._seed_account('child-only@outlook.com', group_id=self.child_group_id)
+
+        response = self._exists('child-only@outlook.com', self.group_id)
+        self.assertFalse(response.get_json()['exists'])
+
+        response = self._exists('child-only@outlook.com', self.group_id, include_descendants='true')
+        self.assertTrue(response.get_json()['exists'])
+
+    def test_alias_match_requires_option(self):
+        row = self._seed_account('alias-owner@outlook.com')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'INSERT INTO account_aliases (account_id, alias_email) VALUES (?, ?)',
+                (row['id'], 'alias-hit@outlook.com'),
+            )
+            db.commit()
+
+        response = self._exists('alias-hit@outlook.com', self.group_id)
+        self.assertFalse(response.get_json()['exists'])
+
+        response = self._exists('alias-hit@outlook.com', self.group_id, include_aliases='1')
+        payload = response.get_json()
+        self.assertTrue(payload['exists'])
+        self.assertEqual(payload['matched_alias'], 'alias-hit@outlook.com')
+        self.assertEqual(payload['account']['email'], 'alias-owner@outlook.com')
+
+    def test_inactive_account_still_reports_exists(self):
+        row = self._seed_account('inactive@outlook.com')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute('UPDATE accounts SET status = ? WHERE id = ?', ('inactive', row['id']))
+            db.commit()
+
+        payload = self._exists('inactive@outlook.com', self.group_id).get_json()
+        self.assertTrue(payload['exists'])
+        self.assertEqual(payload['account']['status'], 'inactive')
+
+    def test_missing_or_invalid_params_return_400(self):
+        cases = (
+            {'group_id': self.group_id},
+            {'email': '', 'group_id': self.group_id},
+            {'email': 'not-an-email', 'group_id': self.group_id},
+            {'email': 'a@outlook.com'},
+            {'email': 'a@outlook.com', 'group_id': 'abc'},
+            {'email': 'a@outlook.com', 'group_id': 0},
+        )
+        for query in cases:
+            response = self.client.get(
+                '/api/external/accounts/exists',
+                headers=self._headers(),
+                query_string=query,
+            )
+            self.assertEqual(response.status_code, 400, query)
+            self.assertFalse(response.get_json()['success'], query)
+
+    def test_group_not_found_returns_404(self):
+        response = self._exists('a@outlook.com', 99999)
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_missing_api_key_returns_401(self):
+        response = self.client.get(
+            '/api/external/accounts/exists',
+            query_string={'email': 'a@outlook.com', 'group_id': self.group_id},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_readonly_permission_can_query(self):
+        self._seed_account('readonly-ok@outlook.com')
+        self._set_permission('readonly')
+        response = self._exists('readonly-ok@outlook.com', self.group_id)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['exists'])
+
+    def test_route_uses_readonly_api_key_decorator(self):
+        view = self.app.view_functions['api_external_account_exists_in_group']
+        self.assertTrue(getattr(view, '_requires_api_key', False))
+        self.assertFalse(getattr(view, '_requires_api_key_write', False))
 
 
 class ExternalApiKeyPermissionSettingsTests(ExternalAccountWriteTestBase):
