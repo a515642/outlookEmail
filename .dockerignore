@@ -27,6 +27,12 @@ ENV/
 *.db
 *.sqlite
 *.sqlite3
+data/
+
+# 本地环境变量与密钥（运行时通过 env_file 注入，不打进镜像）
+.env
+.env.local
+secret_key.txt
 
 # 日志
 *.log
