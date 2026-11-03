@@ -2558,7 +2558,9 @@ def set_account_email_read_state(account: Dict[str, Any], items: List[Dict[str, 
 
 
 def wake_account_mailbox(account: Dict[str, Any]) -> Dict[str, Any]:
-    """对邮箱执行一次轻量写操作（切换最新邮件的已读状态后立即恢复），用于唤醒长期无写活动的邮箱。"""
+    """对 Outlook 邮箱执行一次轻量写操作（切换最新邮件的已读状态后立即恢复），用于唤醒长期无写活动的邮箱。"""
+    if str(account.get('account_type') or 'outlook').lower() == 'imap':
+        return {'success': False, 'error': '邮箱保活唤醒仅支持 Outlook 邮箱，自定义 IMAP 邮箱不支持'}
     if account.get('icloud_address'):
         return {'success': False, 'error': 'iCloud 隔离邮箱暂不支持保活唤醒'}
 

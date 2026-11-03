@@ -109,6 +109,31 @@ class MailboxWakeTests(unittest.TestCase):
         self.assertIn('收件箱暂无邮件', payload['error'])
         write_mock.assert_not_called()
 
+    def test_wake_rejects_imap_accounts(self):
+        with self.app.app_context():
+            web_outlook_app.add_account(
+                'imap@example.com',
+                'password',
+                group_id=1,
+                account_type='imap',
+                provider='custom',
+                imap_host='imap.example.com',
+                imap_password='imap-password',
+            )
+            imap_account = web_outlook_app.get_account_by_email('imap@example.com')
+        self.assertIsNotNone(imap_account)
+
+        with patch.object(web_outlook_app, 'fetch_account_folder_emails') as fetch_mock, \
+                patch.object(web_outlook_app, 'set_account_email_read_state') as write_mock:
+            response = self.client.post(f'/api/accounts/{imap_account["id"]}/wake', json={})
+
+        self.assertEqual(response.status_code, 502)
+        payload = response.get_json()
+        self.assertFalse(payload['success'])
+        self.assertIn('仅支持 Outlook', payload['error'])
+        fetch_mock.assert_not_called()
+        write_mock.assert_not_called()
+
     def test_settings_expose_and_validate_wake_options(self):
         response = self.client.get('/api/settings')
         self.assertEqual(response.status_code, 200)

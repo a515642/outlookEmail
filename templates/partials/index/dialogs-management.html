@@ -117,14 +117,14 @@
                                         <input type="number" class="form-input" id="mailAutoSyncSeconds" min="0" max="600" value="30" placeholder="30">
                                         <span>秒</span>
                                     </div>
-                                    <div class="form-hint">当前打开的邮箱会按该间隔在后台自动同步新邮件；0 表示关闭。页面切到后台时暂停同步。</div>
+                                    <div class="form-hint">当前打开的邮箱会按该间隔在后台自动同步新邮件；列表停在顶部时会自动追加新邮件并高亮，滚动查看旧邮件时改为显示可点击的新邮件提示；0 表示关闭。页面切到后台时暂停同步。</div>
                                 </div>
                                 <div class="form-group">
                                     <label class="settings-toggle settings-toggle--card">
                                         <input type="checkbox" id="mailboxKeepaliveEnabled">
                                         <span class="form-label">邮箱保活唤醒</span>
                                     </label>
-                                    <div class="form-hint">开启后，服务端会定期对长期没有写活动的活跃邮箱执行一次轻量写操作（切换最新邮件已读状态后立即恢复），用于避免邮箱因长期无操作而暂停收信；默认关闭。</div>
+                                    <div class="form-hint">仅对 Outlook 邮箱生效：开启后，服务端会定期对长期没有写活动的活跃 Outlook 邮箱执行一次轻量写操作（切换最新邮件已读状态后立即恢复），用于避免邮箱因长期无操作而暂停收信；自定义 IMAP 和 iCloud 隔离邮箱不会被纳入。默认关闭。</div>
                                 </div>
                                 <div class="form-group">
                                     <label class="form-label">邮箱保活间隔</label>
@@ -132,7 +132,7 @@
                                         <input type="number" class="form-input" id="mailboxKeepaliveIntervalHours" min="1" max="720" value="24" placeholder="24">
                                         <span>小时</span>
                                     </div>
-                                    <div class="form-hint">仅在开启保活唤醒时生效。</div>
+                                    <div class="form-hint">仅在开启保活唤醒时生效，仅对 Outlook 邮箱执行。</div>
                                 </div>
                                 <div class="form-group">
                                     <label class="settings-toggle settings-toggle--card">

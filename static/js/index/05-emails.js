@@ -589,6 +589,41 @@
             return mergedResult;
         }
 
+        function applyAutoMergedMailboxSync(cacheKey, data, options = {}) {
+            const syncKey = getPendingNewMailSyncKey(options.context?.account, options.context?.folder);
+            pendingNewMailSyncs.delete(syncKey);
+            hideNewMailNotice();
+            const listElement = document.getElementById('emailList');
+            const previousScrollTop = listElement ? listElement.scrollTop : null;
+            const mergeResult = mergeEmailListByStableKey(
+                Array.isArray(currentEmails) ? currentEmails : [],
+                Array.isArray(data.emails) ? data.emails : [],
+                options.folder
+            );
+            const newlySyncedRows = collectNewlySyncedEmailRows(data, mergeResult, options.folder);
+            const { method, remoteMethod, methodLabel } = getEmailListMethodMetadata(data, options);
+            markNewlySyncedEmailRows(newlySyncedRows, options.folder);
+            currentEmails = mergeResult.emails;
+            currentMethod = method;
+            hasMoreEmails = data.has_more === true;
+            currentSkip = currentEmails.length;
+
+            cacheEmailListResponse(cacheKey, { ...data, emails: currentEmails }, method, methodLabel, { remoteMethod });
+            updateEmailListHeader(methodLabel, currentEmails.length);
+            renderEmailList(currentEmails);
+            if (previousScrollTop !== null) {
+                const currentListElement = document.getElementById('emailList');
+                if (currentListElement) {
+                    currentListElement.scrollTop = previousScrollTop;
+                }
+            }
+            scheduleEmailListLoadCheck(80);
+            if (newlySyncedRows.length > 0) {
+                scheduleNewEmailHighlightClear();
+            }
+            return mergeResult;
+        }
+
         async function tryRenderLocalRetainedEmails(email, cacheKey) {
             if (!isNormalMailLocalRetentionEnabled()) {
                 setMailSyncStatus('本地存储未启用');
@@ -808,6 +843,17 @@
                     currentFolder
                 );
                 if (mergedPreview.newEmails.length === 0) {
+                    return;
+                }
+                const listElement = document.getElementById('emailList');
+                const isAtListTop = !listElement || listElement.scrollTop <= 8;
+                if (isAtListTop) {
+                    // 停在列表顶部时直接追加新邮件，避免额外点击；滚动位置保持不变，新行短暂高亮。
+                    applyAutoMergedMailboxSync(`${context.account}_${context.folder}`, data, {
+                        folder: context.folder,
+                        method: getRemoteMailboxMethodFallback(),
+                        context,
+                    });
                     return;
                 }
                 queuePendingNewMailSync(

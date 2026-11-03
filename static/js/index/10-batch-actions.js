@@ -230,6 +230,7 @@
             const selectAllBtn = document.getElementById('accountSelectAllBtn');
             const batchRefreshBtn = document.getElementById('batchRefreshTokensBtn');
             const batchOutlookAutoAuthBtn = document.getElementById('batchOutlookAutoAuthBtn');
+            const batchWakeBtn = document.getElementById('batchWakeMailboxesBtn');
             const batchCopyBtn = document.getElementById('batchCopyEmailsBtn');
             const batchExportBtn = document.getElementById('batchExportAccountsBtn');
             const batchEnableForwardingBtn = document.getElementById('batchEnableForwardingBtn');
@@ -242,6 +243,7 @@
             const panel = document.getElementById('accountPanel');
             const refreshableChecked = checked.filter(cb => cb.dataset.refreshable === 'true');
             const autoAuthChecked = checked.filter(cb => (cb.dataset.accountType || 'outlook') !== 'imap');
+            const wakeChecked = checked.filter(cb => (cb.dataset.accountType || 'outlook') !== 'imap');
             const enableForwardingChecked = checked.filter(cb => cb.dataset.forwardEnabled !== 'true');
             const disableForwardingChecked = checked.filter(cb => cb.dataset.forwardEnabled === 'true');
             const isForwardingUpdating = batchEnableForwardingBtn?.dataset.loading === 'true'
@@ -256,6 +258,7 @@
 
             if (batchRefreshBtn) batchRefreshBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchOutlookAutoAuthBtn) batchOutlookAutoAuthBtn.style.display = isTempContext ? 'none' : 'inline-flex';
+            if (batchWakeBtn) batchWakeBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchExportBtn) batchExportBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchEnableForwardingBtn) batchEnableForwardingBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchDisableForwardingBtn) batchDisableForwardingBtn.style.display = isTempContext ? 'none' : 'inline-flex';
@@ -302,6 +305,18 @@
                         batchOutlookAutoAuthBtn.textContent = autoAuthChecked.length > 0
                             ? `加入自动授权${autoAuthChecked.length !== checked.length ? ` (${autoAuthChecked.length})` : ''}`
                             : '加入自动授权';
+                    }
+                }
+                if (batchWakeBtn) {
+                    const isWaking = batchWakeBtn.dataset.loading === 'true';
+                    batchWakeBtn.disabled = wakeChecked.length === 0 || isWaking;
+                    batchWakeBtn.title = wakeChecked.length === 0
+                        ? '所选账号中没有可唤醒的 Outlook 账号'
+                        : '对所选 Outlook 邮箱执行一次保活唤醒（自定义 IMAP 邮箱会自动跳过）';
+                    if (!isWaking) {
+                        batchWakeBtn.textContent = wakeChecked.length > 0
+                            ? `唤醒邮箱${wakeChecked.length !== checked.length ? ` (${wakeChecked.length})` : ''}`
+                            : '唤醒邮箱';
                     }
                 }
                 if (batchCopyBtn) {
@@ -369,6 +384,12 @@
                     batchOutlookAutoAuthBtn.dataset.loading = 'false';
                     batchOutlookAutoAuthBtn.textContent = '加入自动授权';
                     batchOutlookAutoAuthBtn.title = '';
+                }
+                if (batchWakeBtn) {
+                    batchWakeBtn.disabled = false;
+                    batchWakeBtn.dataset.loading = 'false';
+                    batchWakeBtn.textContent = '唤醒邮箱';
+                    batchWakeBtn.title = '';
                 }
                 if (batchCopyBtn) {
                     batchCopyBtn.disabled = false;
@@ -468,6 +489,7 @@
                     export: document.getElementById('batchExportAccountsBtn'),
                     refresh: document.getElementById('batchRefreshTokensBtn'),
                     outlookAutoAuth: document.getElementById('batchOutlookAutoAuthBtn'),
+                    wake: document.getElementById('batchWakeMailboxesBtn'),
                     enableForwarding: document.getElementById('batchEnableForwardingBtn'),
                     disableForwarding: document.getElementById('batchDisableForwardingBtn'),
                     enableAccounts: document.getElementById('batchEnableAccountsBtn'),
@@ -804,6 +826,89 @@
                 }
             } catch (error) {
                 showToast('批量加入自动授权失败: ' + error.message, 'error');
+            } finally {
+                btn.dataset.loading = 'false';
+                updateAccountBatchControls(context);
+            }
+        }
+
+        async function wakeSelectedAccountsMailboxes() {
+            const context = getCurrentAccountBatchSelectionContext();
+            const btn = getAccountBatchButton(context, 'wake');
+            if (!btn || btn.disabled) return;
+            if (context.isTempContext) {
+                showToast('临时邮箱不支持保活唤醒', 'error');
+                return;
+            }
+
+            const selectedAccounts = getAccountBatchSelectedAccounts(context);
+            const eligibleAccounts = selectedAccounts
+                .filter(account => String(account.account_type || 'outlook').toLowerCase() !== 'imap');
+            const accountIds = eligibleAccounts
+                .map(account => normalizeAccountBatchId(account.id))
+                .filter(Number.isFinite);
+
+            if (!accountIds.length) {
+                showToast('所选账号中没有可唤醒的 Outlook 账号', 'error');
+                return;
+            }
+
+            const skippedCount = selectedAccounts.length - eligibleAccounts.length;
+            const skipHint = skippedCount > 0
+                ? `自定义 IMAP 邮箱（${skippedCount} 个）会自动跳过。`
+                : '';
+            if (!(await showConfirmModal(
+                `确定对所选 ${accountIds.length} 个 Outlook 邮箱执行保活唤醒吗？将依次切换并恢复每个邮箱最新邮件的已读状态。${skipHint}`,
+                { title: '批量唤醒邮箱', confirmText: '确认唤醒', danger: false }
+            ))) {
+                return;
+            }
+
+            btn.disabled = true;
+            btn.dataset.loading = 'true';
+            let successCount = 0;
+            let failedCount = 0;
+            let restoreFailedCount = 0;
+            let firstError = '';
+
+            try {
+                for (let index = 0; index < accountIds.length; index += 1) {
+                    btn.textContent = `唤醒中 ${index + 1}/${accountIds.length}...`;
+                    try {
+                        const response = await fetch(`/api/accounts/${accountIds[index]}/wake`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({}),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (response.ok && data.success) {
+                            successCount += 1;
+                            if (data.restored === false) {
+                                restoreFailedCount += 1;
+                            }
+                        } else {
+                            failedCount += 1;
+                            if (!firstError) {
+                                firstError = data.error || `HTTP ${response.status}`;
+                            }
+                        }
+                    } catch (error) {
+                        failedCount += 1;
+                        if (!firstError) {
+                            firstError = error.message || '网络错误';
+                        }
+                    }
+                }
+
+                const parts = [`成功 ${successCount}`];
+                if (restoreFailedCount > 0) parts.push(`已唤醒但恢复原状态失败 ${restoreFailedCount}`);
+                if (failedCount > 0) parts.push(`失败 ${failedCount}`);
+                if (skippedCount > 0) parts.push(`跳过 ${skippedCount}`);
+                const errorSuffix = firstError ? `（首个失败：${firstError}）` : '';
+                showToast(
+                    `批量唤醒完成：${parts.join('，')}${errorSuffix}`,
+                    failedCount > 0 || restoreFailedCount > 0 ? 'warning' : 'success'
+                );
             } finally {
                 btn.dataset.loading = 'false';
                 updateAccountBatchControls(context);

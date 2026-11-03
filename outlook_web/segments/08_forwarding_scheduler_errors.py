@@ -1717,6 +1717,7 @@ def process_mailbox_keepalive_job():
                     '''
                     SELECT id FROM accounts
                     WHERE status = 'active'
+                      AND COALESCE(account_type, 'outlook') != 'imap'
                       AND (mailbox_last_wake_at IS NULL OR mailbox_last_wake_at < ?)
                       AND created_at < ?
                     ORDER BY COALESCE(mailbox_last_wake_at, created_at) ASC

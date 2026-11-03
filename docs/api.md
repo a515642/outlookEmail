@@ -2432,6 +2432,8 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 
 服务端会在成功后把唤醒时间写入账号的 `mailbox_last_wake_at`。长期自动保活由设置 `mailbox_keepalive_enabled` 与 `mailbox_keepalive_interval_hours` 控制。
 
+该接口与自动保活都只作用于 Outlook 邮箱：自定义 IMAP 账号（`account_type=imap`）和 iCloud 隔离邮箱会被拒绝或跳过。可通过重复调用本接口实现批量唤醒，建议串行执行。
+
 ### POST `/api/emails/retain-bodies`
 
 为已保留的普通邮箱列表行补齐详情正文缓存，供本地优先列表、新邮件提示合并后和后续离线详情回退使用。该接口只在 `normal_mail_local_retention_enabled=true` 时执行；关闭时返回 `local_retention_enabled=false` 并跳过所有项目。
@@ -2797,8 +2799,8 @@ POST /api/cloudflare/channels
 | `telegram_chat_id` | Telegram Chat ID |
 | `telegram_topic_id` | Telegram Topic ID（可选，话题群组的 message_thread_id） |
 | `normal_mail_local_retention_enabled` | 是否启用普通邮箱本地保留 |
-| `mail_auto_sync_seconds` | 当前打开邮件的后台自动同步间隔秒数，`0` 表示关闭，默认 `30` |
-| `mailbox_keepalive_enabled` | 是否启用服务端邮箱保活唤醒，默认 `false` |
+| `mail_auto_sync_seconds` | 当前打开邮件的后台自动同步间隔秒数，`0` 表示关闭，默认 `30`；列表停在顶部时新邮件自动追加并高亮，否则显示可点击的新邮件提示 |
+| `mailbox_keepalive_enabled` | 是否启用服务端邮箱保活唤醒（仅对 Outlook 邮箱生效），默认 `false` |
 | `mailbox_keepalive_interval_hours` | 邮箱保活唤醒间隔小时数，范围 `1-720`，默认 `24` |
 
 ### PUT `/api/settings`
@@ -2827,7 +2829,7 @@ POST /api/cloudflare/channels
 | `external_api_key_permission` | string | 对外 API Key 权限：`readonly` 或 `readwrite`，大小写不敏感；非法值返回 HTTP 400，不传该字段时保持现有值 |
 | `normal_mail_local_retention_enabled` | bool/string | 是否启用普通邮箱本地保留；通过 `/api/settings` 更新会同步刷新后端进程内读取缓存 |
 | `mail_auto_sync_seconds` | int | 当前打开邮箱的后台自动同步间隔，范围 `0-600`，`0` 表示关闭 |
-| `mailbox_keepalive_enabled` | bool/string | 是否启用服务端邮箱保活唤醒；开启后会按间隔对长期无写活动的活跃邮箱执行一次轻量唤醒写操作 |
+| `mailbox_keepalive_enabled` | bool/string | 是否启用服务端邮箱保活唤醒；开启后会按间隔对长期无写活动的活跃 Outlook 邮箱执行一次轻量唤醒写操作，自定义 IMAP 邮箱不会被纳入 |
 | `mailbox_keepalive_interval_hours` | int | 邮箱保活唤醒间隔小时数，范围 `1-720` |
 
 说明：修改 `login_password` 时必须提供正确的 `current_login_password`；改密成功后服务端会轮换登录会话版本，其他已登录的 Web Session 需要重新登录，当前改密会话保持有效。
