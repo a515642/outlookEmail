@@ -23,6 +23,12 @@
                 : '不限量';
         }
 
+        function formatEmailShareAccessCode(share) {
+            if (!share?.requires_access_code) return '未设置';
+            if (share.access_code_available && share.access_code) return share.access_code;
+            return '已设置（不可查看）';
+        }
+
         function hideCreateEmailShareModal() {
             hideModal('createEmailShareModal');
         }
@@ -130,7 +136,7 @@
                     <input type="text" class="form-input" readonly value="${escapeHtml(share.share_url || '')}">
                     <button class="btn btn-secondary" type="button" onclick="copyEmailShareUrl('${escapeHtml(share.share_url || '')}', '${escapeHtml(accessCode)}')">${accessCode ? '复制链接和访问码' : '复制'}</button>
                 </div>
-                ${accessCode ? `<div class="form-hint">访问码：${escapeHtml(accessCode)}（请保存，关闭后无法再次查看）</div>` : ''}
+                ${accessCode ? `<div class="form-hint">访问码：${escapeHtml(accessCode)}（也可在分享管理中查看和复制）</div>` : ''}
                 <div class="form-hint">有效期：${escapeHtml(formatEmailShareExpiry(share))}</div>
                 <div class="form-hint">可见范围：${escapeHtml(formatEmailShareVisibility(share))}</div>
             `;
@@ -211,7 +217,7 @@
             if (!Array.isArray(shares) || shares.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="8" class="share-empty">暂无分享记录</td>
+                        <td colspan="9" class="share-empty">暂无分享记录</td>
                     </tr>
                 `;
                 updateBatchActionButtons();
@@ -242,12 +248,14 @@
                         <td class="share-cell-mono">${escapeHtml(expiryStr)}</td>
                         <td>${escapeHtml(visibilityStr)}</td>
                         <td class="share-cell-mono" title="${escapeHtml(share.created_at || '')}">${escapeHtml(formatAbsoluteDateTime(share.created_at))}</td>
+                        <td class="share-cell-mono">${escapeHtml(formatEmailShareAccessCode(share))}</td>
                         <td>
-                            <div class="share-url-container">
-                                <input type="text" class="form-input share-url-input" readonly value="${escapeHtml(share.share_url || '')}">
-                                <button class="btn btn-secondary btn-sm-action" type="button" onclick="copyEmailShareUrl('${escapeHtml(share.share_url || '')}')">复制</button>
-                            </div>
-                            <div class="form-hint">${share.requires_access_code ? '需访问码' : '无需访问码'}</div>
+                            ${share.share_url ? `
+                                <div class="share-url-container">
+                                    <input type="text" class="form-input share-url-input" readonly value="${escapeHtml(share.share_url)}">
+                                    <button class="btn btn-secondary btn-sm-action" type="button" onclick="copyEmailShareUrl('${escapeHtml(share.share_url)}', '${escapeHtml(share.access_code || '')}')">复制</button>
+                                </div>
+                            ` : '<div class="form-hint share-url-error">链接不可用，请删除后重新创建</div>'}
                         </td>
                         <td style="text-align: right;">
                             <div style="display: flex; gap: 6px; justify-content: flex-end;">

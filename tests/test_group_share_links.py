@@ -150,7 +150,8 @@ class GroupShareLinkTests(unittest.TestCase):
 
         share = self._create_share(group_id, access_code='Ab12', max_email_count=2)
         self.assertTrue(share['requires_access_code'])
-        self.assertNotIn('access_code', share)
+        self.assertEqual(share['access_code'], 'Ab12')
+        self.assertTrue(share['access_code_available'])
         self.assertNotIn('access_code_hash', share)
         self.assertEqual(share['group_name'], self._group_name(group_id))
         self.assertEqual(share['max_email_count'], 2)
@@ -160,10 +161,27 @@ class GroupShareLinkTests(unittest.TestCase):
             row = web_outlook_app.get_group_share_row_by_id(share['id'])
             self.assertNotEqual(row['access_code_hash'], 'Ab12')
             self.assertTrue(web_outlook_app.verify_password('Ab12', row['access_code_hash']))
+            self.assertEqual(web_outlook_app.decrypt_data(row['access_code_encrypted']), 'Ab12')
 
         listed = self.client.get(f'/api/group-shares?group_id={group_id}').get_json()['shares']
         self.assertEqual([item['id'] for item in listed], [share['id']])
+        self.assertEqual(listed[0]['access_code'], 'Ab12')
         self.assertNotIn('access_code_hash', listed[0])
+
+    def test_management_marks_access_code_unavailable_when_ciphertext_is_missing(self):
+        group_id = self._create_group()
+        share = self._create_share(group_id, access_code='Ab12')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'UPDATE group_share_links SET access_code_encrypted = NULL WHERE id = ?',
+                (share['id'],)
+            )
+            db.commit()
+        listed = self.client.get('/api/group-shares').get_json()['shares'][0]
+        self.assertTrue(listed['requires_access_code'])
+        self.assertFalse(listed['access_code_available'])
+        self.assertEqual(listed['access_code'], '')
 
     def _group_name(self, group_id):
         with self.app.app_context():

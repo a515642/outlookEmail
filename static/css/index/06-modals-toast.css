@@ -567,6 +567,10 @@
             margin-top: 6px;
         }
 
+        .form-hint.share-url-error {
+            color: var(--danger, #dc2626);
+        }
+
         .edit-account-modal-content {
             width: min(920px, calc(100vw - 40px));
             max-width: calc(100vw - 24px);

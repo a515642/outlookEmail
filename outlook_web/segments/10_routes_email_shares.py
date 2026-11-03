@@ -165,6 +165,17 @@ def get_email_share_max_email_count(share: Dict[str, Any]) -> Optional[int]:
     return None if error else max_email_count
 
 
+def get_email_share_access_code(share: Dict[str, Any]) -> str:
+    encrypted = str(share.get('access_code_encrypted') or '')
+    if not encrypted:
+        return ''
+    try:
+        return decrypt_data(encrypted)
+    except Exception:
+        app.logger.warning('Failed to decrypt email share access code for share id=%s', share.get('id'))
+        return ''
+
+
 def serialize_email_share_row(row: Any) -> Dict[str, Any]:
     share = dict(row)
     status = get_email_share_status(share)
@@ -172,9 +183,14 @@ def serialize_email_share_row(row: Any) -> Dict[str, Any]:
     share_url = ''
     try:
         token = decrypt_email_share_token(share)
-        share_url = build_email_share_url(token)
     except Exception:
         app.logger.warning('Failed to decrypt email share token for share id=%s', share.get('id'))
+    if token:
+        try:
+            share_url = build_email_share_url(token)
+        except Exception:
+            app.logger.warning('Failed to build email share URL for share id=%s', share.get('id'))
+    access_code = get_email_share_access_code(share)
 
     return {
         'id': share.get('id'),
@@ -190,6 +206,8 @@ def serialize_email_share_row(row: Any) -> Dict[str, Any]:
         'status': status,
         'share_url': share_url,
         'requires_access_code': bool(share.get('access_code_hash')),
+        'access_code': access_code,
+        'access_code_available': bool(access_code),
     }
 
 
@@ -644,9 +662,9 @@ def api_create_email_share():
         '''
         INSERT INTO email_share_links (
             account_id, token_hash, token_encrypted, expires_at, never_expires, max_email_count,
-            access_code_hash
+            access_code_hash, access_code_encrypted
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             int(account['id']),
@@ -656,6 +674,7 @@ def api_create_email_share():
             1 if never_expires else 0,
             max_email_count,
             hash_password(access_code) if access_code else None,
+            encrypt_data(access_code) if access_code else None,
         )
     )
     db.commit()

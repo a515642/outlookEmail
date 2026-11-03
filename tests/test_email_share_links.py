@@ -143,6 +143,7 @@ class EmailShareLinkTests(unittest.TestCase):
             ).fetchone()
             self.assertIn('max_email_count', columns)
             self.assertIn('access_code_hash', columns)
+            self.assertIn('access_code_encrypted', columns)
             self.assertIsNone(migrated_row['max_email_count'])
             self.assertIsNone(migrated_row['access_code_hash'])
 
@@ -151,19 +152,38 @@ class EmailShareLinkTests(unittest.TestCase):
         anonymous = self.app.test_client()
         self.assertEqual(anonymous.get(f'/api/share/email/{legacy_token}/status').status_code, 200)
 
-    def test_access_code_is_hashed_and_not_exposed_by_management_api(self):
+    def test_access_code_is_hashed_and_encrypted_for_management(self):
         account_id = self._insert_account()
         share = self._create_share(account_id, access_code='Ab12')
         self.assertTrue(share['requires_access_code'])
-        self.assertNotIn('access_code', share)
+        self.assertEqual(share['access_code'], 'Ab12')
+        self.assertTrue(share['access_code_available'])
         self.assertNotIn('access_code_hash', share)
         with self.app.app_context():
             row = web_outlook_app.get_email_share_row_by_id(share['id'])
             self.assertNotEqual(row['access_code_hash'], 'Ab12')
+            self.assertNotEqual(row['access_code_encrypted'], 'Ab12')
             self.assertTrue(web_outlook_app.verify_password('Ab12', row['access_code_hash']))
+            self.assertEqual(web_outlook_app.decrypt_data(row['access_code_encrypted']), 'Ab12')
         listed = self.client.get('/api/email-shares').get_json()['shares'][0]
         self.assertTrue(listed['requires_access_code'])
+        self.assertEqual(listed['access_code'], 'Ab12')
         self.assertNotIn('access_code_hash', listed)
+
+    def test_legacy_access_code_without_ciphertext_is_marked_unavailable(self):
+        account_id = self._insert_account()
+        share = self._create_share(account_id, access_code='Ab12')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'UPDATE email_share_links SET access_code_encrypted = NULL WHERE id = ?',
+                (share['id'],)
+            )
+            db.commit()
+        listed = self.client.get('/api/email-shares').get_json()['shares'][0]
+        self.assertTrue(listed['requires_access_code'])
+        self.assertFalse(listed['access_code_available'])
+        self.assertEqual(listed['access_code'], '')
 
     def test_create_share_validates_optional_access_code(self):
         account_id = self._insert_account()

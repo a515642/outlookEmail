@@ -1614,6 +1614,7 @@ def init_db():
             token_hash TEXT UNIQUE NOT NULL,
             token_encrypted TEXT NOT NULL,
             access_code_hash TEXT,
+            access_code_encrypted TEXT,
             expires_at TIMESTAMP,
             never_expires INTEGER NOT NULL DEFAULT 0,
             max_email_count INTEGER CHECK (
@@ -1640,6 +1641,8 @@ def init_db():
         cursor.execute('ALTER TABLE email_share_links ADD COLUMN max_email_count INTEGER')
     if 'access_code_hash' not in email_share_columns:
         cursor.execute('ALTER TABLE email_share_links ADD COLUMN access_code_hash TEXT')
+    if 'access_code_encrypted' not in email_share_columns:
+        cursor.execute('ALTER TABLE email_share_links ADD COLUMN access_code_encrypted TEXT')
 
     # 创建分组分享链接表
     cursor.execute('''
@@ -1649,6 +1652,7 @@ def init_db():
             token_hash TEXT UNIQUE NOT NULL,
             token_encrypted TEXT NOT NULL,
             access_code_hash TEXT,
+            access_code_encrypted TEXT,
             expires_at TIMESTAMP,
             never_expires INTEGER NOT NULL DEFAULT 0,
             max_email_count INTEGER CHECK (
@@ -1661,6 +1665,10 @@ def init_db():
             FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE
         )
     ''')
+    cursor.execute("PRAGMA table_info(group_share_links)")
+    group_share_columns = [col[1] for col in cursor.fetchall()]
+    if 'access_code_encrypted' not in group_share_columns:
+        cursor.execute('ALTER TABLE group_share_links ADD COLUMN access_code_encrypted TEXT')
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_group_share_links_group
         ON group_share_links(group_id, created_at)

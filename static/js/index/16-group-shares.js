@@ -1,4 +1,4 @@
-        /* global copyTextToClipboard, escapeHtml, formatAbsoluteDateTime, formatEmailShareExpiry, formatEmailShareStatus, formatEmailShareVisibility, groups, handleApiError, hideModal, showConfirmModal, showModal, showToast */
+        /* global copyTextToClipboard, escapeHtml, formatAbsoluteDateTime, formatEmailShareAccessCode, formatEmailShareExpiry, formatEmailShareStatus, formatEmailShareVisibility, groups, handleApiError, hideModal, showConfirmModal, showModal, showToast */
 
         // ==================== 分组分享 ====================
 
@@ -120,7 +120,7 @@
                     <input type="text" class="form-input" readonly value="${escapeHtml(share.share_url || '')}">
                     <button class="btn btn-secondary" type="button" onclick="copyGroupShareUrl('${escapeHtml(share.share_url || '')}', '${escapeHtml(accessCode)}')">${accessCode ? '复制链接和访问码' : '复制'}</button>
                 </div>
-                ${accessCode ? `<div class="form-hint">访问码：${escapeHtml(accessCode)}（请保存，关闭后无法再次查看）</div>` : ''}
+                ${accessCode ? `<div class="form-hint">访问码：${escapeHtml(accessCode)}（也可在分享管理中查看和复制）</div>` : ''}
                 <div class="form-hint">有效期：${escapeHtml(formatEmailShareExpiry(share))}</div>
                 <div class="form-hint">可见范围：每个邮箱 ${escapeHtml(formatEmailShareVisibility(share))}</div>
                 <div class="form-hint">访客需输入分组内邮箱的完整地址验证后才能查看。</div>
@@ -292,7 +292,7 @@
             if (!Array.isArray(shares) || shares.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="8" class="share-empty">暂无分组分享记录</td>
+                        <td colspan="9" class="share-empty">暂无分组分享记录</td>
                     </tr>
                 `;
                 updateGroupShareBatchButtons();
@@ -320,12 +320,14 @@
                         <td class="share-cell-mono">${escapeHtml(formatEmailShareExpiry(share))}</td>
                         <td>${escapeHtml(formatEmailShareVisibility(share))}</td>
                         <td class="share-cell-mono" title="${escapeHtml(share.created_at || '')}">${escapeHtml(formatAbsoluteDateTime(share.created_at))}</td>
+                        <td class="share-cell-mono">${escapeHtml(formatEmailShareAccessCode(share))}</td>
                         <td>
-                            <div class="share-url-container">
-                                <input type="text" class="form-input share-url-input" readonly value="${escapeHtml(share.share_url || '')}">
-                                <button class="btn btn-secondary btn-sm-action" type="button" onclick="copyGroupShareUrl('${escapeHtml(share.share_url || '')}')">复制</button>
-                            </div>
-                            <div class="form-hint">${share.requires_access_code ? '需访问码' : '无需访问码'}</div>
+                            ${share.share_url ? `
+                                <div class="share-url-container">
+                                    <input type="text" class="form-input share-url-input" readonly value="${escapeHtml(share.share_url)}">
+                                    <button class="btn btn-secondary btn-sm-action" type="button" onclick="copyGroupShareUrl('${escapeHtml(share.share_url)}', '${escapeHtml(share.access_code || '')}')">复制</button>
+                                </div>
+                            ` : '<div class="form-hint share-url-error">链接不可用，请删除后重新创建</div>'}
                         </td>
                         <td style="text-align: right;">
                             <div style="display: flex; gap: 6px; justify-content: flex-end;">

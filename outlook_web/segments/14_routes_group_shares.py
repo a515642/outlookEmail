@@ -51,6 +51,17 @@ def get_group_share_status(share: Optional[Dict[str, Any]]) -> str:
     return EMAIL_SHARE_STATUS_ACTIVE
 
 
+def get_group_share_access_code(share: Dict[str, Any]) -> str:
+    encrypted = str(share.get('access_code_encrypted') or '')
+    if not encrypted:
+        return ''
+    try:
+        return decrypt_data(encrypted)
+    except Exception:
+        app.logger.warning('Failed to decrypt group share access code for share id=%s', share.get('id'))
+        return ''
+
+
 def serialize_group_share_row(row: Any) -> Dict[str, Any]:
     share = dict(row)
     status = get_group_share_status(share)
@@ -58,9 +69,14 @@ def serialize_group_share_row(row: Any) -> Dict[str, Any]:
     share_url = ''
     try:
         token = decrypt_data(str(share.get('token_encrypted') or ''))
-        share_url = build_group_share_url(token)
     except Exception:
         app.logger.warning('Failed to decrypt group share token for share id=%s', share.get('id'))
+    if token:
+        try:
+            share_url = build_group_share_url(token)
+        except Exception:
+            app.logger.warning('Failed to build group share URL for share id=%s', share.get('id'))
+    access_code = get_group_share_access_code(share)
 
     return {
         'id': share.get('id'),
@@ -76,6 +92,8 @@ def serialize_group_share_row(row: Any) -> Dict[str, Any]:
         'status': status,
         'share_url': share_url,
         'requires_access_code': bool(share.get('access_code_hash')),
+        'access_code': access_code,
+        'access_code_available': bool(access_code),
     }
 
 
@@ -371,9 +389,9 @@ def api_create_group_share():
         '''
         INSERT INTO group_share_links (
             group_id, token_hash, token_encrypted, expires_at, never_expires, max_email_count,
-            access_code_hash
+            access_code_hash, access_code_encrypted
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             int(group['id']),
@@ -383,6 +401,7 @@ def api_create_group_share():
             1 if never_expires else 0,
             max_email_count,
             hash_password(access_code) if access_code else None,
+            encrypt_data(access_code) if access_code else None,
         )
     )
     db.commit()
