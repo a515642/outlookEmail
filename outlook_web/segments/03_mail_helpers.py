@@ -1060,8 +1060,9 @@ def get_email_detail_graph(client_id: str, refresh_token: str, message_id: str, 
 
 def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_ids: List[str],
                                   proxy_url: str = None,
-                                  fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
-    """使用 Graph API 批量标记邮件为已读"""
+                                  fallback_proxy_urls: Optional[List[str]] = None,
+                                  is_read: bool = True) -> Dict[str, Any]:
+    """使用 Graph API 批量设置邮件已读/未读状态（默认标记为已读）"""
     normalized_ids = [str(message_id or '').strip() for message_id in (message_ids or []) if str(message_id or '').strip()]
     if not normalized_ids:
         return {
@@ -1104,7 +1105,7 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
                     'Content-Type': 'application/json',
                 },
                 'body': {
-                    'isRead': True,
+                    'isRead': bool(is_read),
                 },
             })
 
@@ -2434,11 +2435,13 @@ def store_imap_message_flags(mail, message_id: Any, action: str = '+FLAGS.SILENT
 
 
 def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
-                               default_mode: str = 'uid') -> Dict[str, Any]:
+                               default_mode: str = 'uid', mark_seen: bool = True) -> Dict[str, Any]:
+    """通过 IMAP 批量设置 Seen 标记（mark_seen=False 时清除 Seen，用于恢复原读取状态）。"""
     success_count = 0
     updated_ids: List[str] = []
     errors: List[Any] = []
     grouped_items: Dict[str, List[Dict[str, Any]]] = {}
+    flag_action = '+FLAGS.SILENT' if mark_seen else '-FLAGS.SILENT'
 
     for item in items or []:
         message_id = str(item.get('id', '') or '').strip()
@@ -2483,6 +2486,8 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
             success, used_mode, attempts = store_imap_message_flags(
                 mail,
                 item['id'],
+                action=flag_action,
+                flags=r'(\Seen)',
                 preferred_mode=preferred_mode
             )
             if success:
@@ -2521,7 +2526,8 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
 def mark_emails_read_imap_batch(email_addr: str, client_id: str, refresh_token: str,
                                 items: List[Dict[str, Any]], server: str = IMAP_SERVER_NEW,
                                 proxy_url: str = None,
-                                fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+                                fallback_proxy_urls: Optional[List[str]] = None,
+                                mark_seen: bool = True) -> Dict[str, Any]:
     access_token = get_access_token_imap(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not access_token:
         return {
@@ -2538,7 +2544,8 @@ def mark_emails_read_imap_batch(email_addr: str, client_id: str, refresh_token: 
             connection = imaplib.IMAP4_SSL(server, IMAP_PORT, timeout=IMAP_TIMEOUT)
         auth_string = f"user={email_addr}\1auth=Bearer {access_token}\1\1".encode('utf-8')
         connection.authenticate('XOAUTH2', lambda x: auth_string)
-        return mark_email_items_seen_imap(connection, items, 'outlook', default_mode='sequence')
+        return mark_email_items_seen_imap(connection, items, 'outlook', default_mode='sequence',
+                                          mark_seen=mark_seen)
     except Exception as exc:
         return {
             'success': False,
@@ -2557,7 +2564,8 @@ def mark_emails_read_imap_batch(email_addr: str, client_id: str, refresh_token: 
 
 def mark_emails_read_imap_generic_result(email_addr: str, imap_password: str, imap_host: str,
                                          items: List[Dict[str, Any]], imap_port: int = 993,
-                                         provider: str = 'custom', proxy_url: str = '') -> Dict[str, Any]:
+                                         provider: str = 'custom', proxy_url: str = '',
+                                         mark_seen: bool = True) -> Dict[str, Any]:
     mail = None
     try:
         mail = create_imap_connection(imap_host, imap_port, proxy_url)
@@ -2579,7 +2587,8 @@ def mark_emails_read_imap_generic_result(email_addr: str, imap_password: str, im
             }
 
         send_imap_id(mail, provider, imap_host)
-        return mark_email_items_seen_imap(mail, items, provider, default_mode='uid')
+        return mark_email_items_seen_imap(mail, items, provider, default_mode='uid',
+                                          mark_seen=mark_seen)
     except Exception as exc:
         return {
             'success': False,

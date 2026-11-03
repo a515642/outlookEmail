@@ -1592,6 +1592,18 @@ def init_scheduler():
                 else:
                     safe_console_print("✓ 定时刷新已禁用")
 
+                if get_setting('mailbox_keepalive_enabled', 'false').lower() == 'true':
+                    scheduler.add_job(
+                        func=process_mailbox_keepalive_job,
+                        trigger=IntervalTrigger(hours=1, timezone=app_tzinfo),
+                        id='mailbox_keepalive',
+                        name='邮箱保活唤醒',
+                        replace_existing=True,
+                        max_instances=1,
+                        coalesce=True
+                    )
+                    jobs_added = True
+
                 jobs_added = add_webdav_backup_job(scheduler, CronTrigger, app_tzinfo) or jobs_added
 
                 manager = globals().get('icloud_manager')
@@ -1677,6 +1689,100 @@ def scheduled_refresh_task():
 
     except Exception as e:
         safe_console_print(f"[定时任务] 执行失败：{str(e)}")
+
+
+MAILBOX_KEEPALIVE_BATCH_LIMIT = 20
+
+
+def process_mailbox_keepalive_job():
+    """邮箱保活任务：对超过设定时长没有写活动的活跃邮箱执行一次轻量唤醒写入。"""
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        with app.app_context():
+            if get_setting('mailbox_keepalive_enabled', 'false').lower() != 'true':
+                return {'success': True, 'skipped': True, 'reason': 'disabled'}
+
+            try:
+                interval_hours = max(1, min(720, int(get_setting('mailbox_keepalive_interval_hours', '24'))))
+            except (TypeError, ValueError):
+                interval_hours = 24
+
+            cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=interval_hours)).strftime(
+                '%Y-%m-%d %H:%M:%S'
+            )
+            conn = open_forwarding_db_connection()
+            try:
+                rows = conn.execute(
+                    '''
+                    SELECT id FROM accounts
+                    WHERE status = 'active'
+                      AND (mailbox_last_wake_at IS NULL OR mailbox_last_wake_at < ?)
+                      AND created_at < ?
+                    ORDER BY COALESCE(mailbox_last_wake_at, created_at) ASC
+                    LIMIT ?
+                    ''',
+                    (cutoff, cutoff, MAILBOX_KEEPALIVE_BATCH_LIMIT),
+                ).fetchall()
+            finally:
+                conn.close()
+
+            if not rows:
+                return {'success': True, 'woken_count': 0, 'failed_count': 0}
+
+            woken_count = 0
+            failed_count = 0
+            for row in rows:
+                account = get_account_by_id(row['id'])
+                if not account:
+                    continue
+                try:
+                    result = wake_account_mailbox(account)
+                except Exception as exc:
+                    result = {'success': False, 'error': f'唤醒异常：{exc}'}
+                status_text = result.get('message') if result.get('success') else f"failed: {result.get('error', '')}"
+                record_account_mailbox_wake(account['id'], status_text or '')
+                if result.get('success'):
+                    woken_count += 1
+                else:
+                    failed_count += 1
+                safe_console_print(
+                    f"[保活] account={account.get('email', '')} result={status_text or ''}"
+                )
+
+            safe_console_print(f'[保活] 本轮唤醒完成：成功 {woken_count}，失败 {failed_count}')
+            return {'success': True, 'woken_count': woken_count, 'failed_count': failed_count}
+
+    except Exception as e:
+        safe_console_print(f'[保活] 执行失败：{str(e)}')
+        return {'success': False, 'error': str(e)}
+
+
+def sync_mailbox_keepalive_scheduler_job():
+    """根据当前设置动态添加或移除邮箱保活任务（设置保存后调用）。"""
+    scheduler = scheduler_instance
+    if scheduler is None:
+        return False
+
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    if get_setting('mailbox_keepalive_enabled', 'false').lower() == 'true':
+        scheduler.add_job(
+            func=process_mailbox_keepalive_job,
+            trigger=IntervalTrigger(hours=1, timezone=get_app_timezone_info()),
+            id='mailbox_keepalive',
+            name='邮箱保活唤醒',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
+        return True
+
+    try:
+        scheduler.remove_job('mailbox_keepalive')
+    except Exception:
+        pass
+    return True
 
 
 ensure_scheduler_started()

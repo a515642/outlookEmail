@@ -619,6 +619,9 @@ def api_get_settings():
         'normal_mail_local_retention_enabled',
         'false',
     )
+    settings['mail_auto_sync_seconds'] = get_setting('mail_auto_sync_seconds', '30')
+    settings['mailbox_keepalive_enabled'] = get_setting('mailbox_keepalive_enabled', 'false')
+    settings['mailbox_keepalive_interval_hours'] = get_setting('mailbox_keepalive_interval_hours', '24')
     skin_settings = get_skin_settings_payload()
     settings['active_skin_id'] = skin_settings['active_skin_id']
     settings['configured_skin_id'] = skin_settings['configured_skin_id']
@@ -890,6 +893,46 @@ def api_update_settings():
                 errors.append('更新普通邮箱本地保留开关失败')
         else:
             errors.append('普通邮箱本地保留开关必须是 true 或 false')
+
+    if 'mail_auto_sync_seconds' in data:
+        try:
+            auto_sync_seconds = int(data['mail_auto_sync_seconds'])
+            if auto_sync_seconds < 0 or auto_sync_seconds > 600:
+                errors.append('自动同步间隔必须在 0-600 秒之间（0 表示关闭）')
+            elif set_setting('mail_auto_sync_seconds', str(auto_sync_seconds)):
+                updated.append('邮件自动同步间隔')
+            else:
+                errors.append('保存邮件自动同步间隔失败')
+        except (TypeError, ValueError):
+            errors.append('邮件自动同步间隔必须是数字')
+
+    if 'mailbox_keepalive_enabled' in data:
+        keepalive_enabled = str(data['mailbox_keepalive_enabled']).strip().lower()
+        if keepalive_enabled in ('true', 'false'):
+            if set_setting('mailbox_keepalive_enabled', keepalive_enabled):
+                updated.append('邮箱保活唤醒开关')
+                try:
+                    if keepalive_enabled == 'true' and scheduler_instance is None:
+                        init_scheduler()
+                    sync_mailbox_keepalive_scheduler_job()
+                except Exception as exc:
+                    errors.append(f'更新邮箱保活任务失败：{exc}')
+            else:
+                errors.append('更新邮箱保活唤醒开关失败')
+        else:
+            errors.append('邮箱保活唤醒开关必须是 true 或 false')
+
+    if 'mailbox_keepalive_interval_hours' in data:
+        try:
+            keepalive_hours = int(data['mailbox_keepalive_interval_hours'])
+            if keepalive_hours < 1 or keepalive_hours > 720:
+                errors.append('邮箱保活间隔必须在 1-720 小时之间')
+            elif set_setting('mailbox_keepalive_interval_hours', str(keepalive_hours)):
+                updated.append('邮箱保活间隔')
+            else:
+                errors.append('保存邮箱保活间隔失败')
+        except (TypeError, ValueError):
+            errors.append('邮箱保活间隔必须是数字')
 
     if 'active_skin_id' in data:
         success, error, _skin = set_active_skin(data.get('active_skin_id'))

@@ -2514,6 +2514,112 @@ def mark_oauth_imap_items_read(account: Dict[str, Any], items: List[Dict[str, st
     return result
 
 
+def set_account_email_read_state(account: Dict[str, Any], items: List[Dict[str, str]],
+                                 is_read: bool, proxy_url: str,
+                                 fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    """按账号类型设置邮件的已读/未读状态，不更新本地保留数据（供保活唤醒回滚使用）。"""
+    if account.get('account_type') == 'imap':
+        return mark_emails_read_imap_generic_result(
+            account['email'],
+            account.get('imap_password', ''),
+            account.get('imap_host', ''),
+            items,
+            account.get('imap_port', 993),
+            account.get('provider', 'custom'),
+            proxy_url,
+            mark_seen=is_read,
+        )
+
+    graph_items, imap_items = split_email_action_items_by_method(items, 'graph')
+    results = []
+    if graph_items:
+        results.append(mark_emails_read_graph_result(
+            account['client_id'],
+            account['refresh_token'],
+            [item['id'] for item in graph_items],
+            proxy_url,
+            fallback_proxy_urls,
+            is_read=is_read,
+        ))
+    if imap_items:
+        result = mark_emails_read_imap_batch(
+            account['email'], account['client_id'], account['refresh_token'],
+            imap_items, IMAP_SERVER_NEW, proxy_url, fallback_proxy_urls,
+            mark_seen=is_read,
+        )
+        if not result.get('success') and result.get('success_count', 0) == 0:
+            result = mark_emails_read_imap_batch(
+                account['email'], account['client_id'], account['refresh_token'],
+                imap_items, IMAP_SERVER_OLD, proxy_url, fallback_proxy_urls,
+                mark_seen=is_read,
+            )
+        results.append(result)
+    return merge_email_action_results(results)
+
+
+def wake_account_mailbox(account: Dict[str, Any]) -> Dict[str, Any]:
+    """对邮箱执行一次轻量写操作（切换最新邮件的已读状态后立即恢复），用于唤醒长期无写活动的邮箱。"""
+    if account.get('icloud_address'):
+        return {'success': False, 'error': 'iCloud 隔离邮箱暂不支持保活唤醒'}
+
+    proxy_url = get_account_proxy_url(account)
+    fallback_proxy_urls = get_account_proxy_failover_urls(account)
+    fetch_result = fetch_account_folder_emails(account, 'inbox', 0, 1, proxy_url, fallback_proxy_urls)
+    if not fetch_result.get('success'):
+        error = fetch_result.get('error')
+        message = error.get('message') if isinstance(error, dict) else str(error or '获取最新邮件失败')
+        return {'success': False, 'error': f'读取收件箱失败：{message}'}
+
+    emails = fetch_result.get('emails') or []
+    if not emails:
+        return {'success': False, 'error': '收件箱暂无邮件，跳过唤醒写操作'}
+
+    latest = emails[0]
+    message_id = str(latest.get('id') or '').strip()
+    if not message_id:
+        return {'success': False, 'error': '最新邮件缺少 message_id，无法执行唤醒'}
+
+    original_read = latest.get('is_read') is True
+    items = [{
+        'id': message_id,
+        'folder': 'inbox',
+        'id_mode': str(latest.get('id_mode') or '').strip().lower(),
+    }]
+    toggle_result = set_account_email_read_state(account, items, not original_read,
+                                                 proxy_url, fallback_proxy_urls)
+    if int(toggle_result.get('success_count') or 0) <= 0:
+        return {
+            'success': False,
+            'error': '唤醒写操作失败：无法切换最新邮件的已读状态',
+            'details': toggle_result.get('errors') or [],
+        }
+
+    restore_result = set_account_email_read_state(account, items, original_read,
+                                                  proxy_url, fallback_proxy_urls)
+    restored = int(restore_result.get('success_count') or 0) > 0
+    return {
+        'success': True,
+        'message': '邮箱已唤醒' if restored else '邮箱已唤醒，但恢复原已读状态失败',
+        'message_id': message_id,
+        'original_is_read': original_read,
+        'restored': restored,
+        'details': restore_result.get('errors') or [],
+    }
+
+
+def record_account_mailbox_wake(account_id: int, status_text: str = '') -> None:
+    """记录账号最近一次保活唤醒时间与状态（与 accounts 其他时间字段一致使用 UTC）。"""
+    db = get_db()
+    try:
+        db.execute(
+            'UPDATE accounts SET mailbox_last_wake_at = CURRENT_TIMESTAMP, mailbox_last_wake_status = ? WHERE id = ?',
+            ((status_text or '')[:200], account_id),
+        )
+        db.commit()
+    except Exception as exc:
+        app.logger.warning('[mailbox-wake] 记录唤醒状态失败 account=%s: %s', account_id, exc)
+
+
 def delete_imap_account_emails(account: Dict[str, Any], items: List[Dict[str, str]],
                                proxy_url: str) -> Dict[str, Any]:
     result = delete_emails_imap_generic_result(
@@ -4088,6 +4194,25 @@ def api_send_outlook_graph_mail():
     status_code = int((result.get('error') or {}).get('status') or 502)
     return jsonify(result), status_code
 
+
+@app.route('/api/accounts/<int:account_id>/wake', methods=['POST'])
+@login_required
+def api_wake_account_mailbox(account_id):
+    """手动唤醒账号邮箱：对最新邮件做一次已读状态切换并立即恢复。"""
+    account = get_account_by_id(account_id)
+    if not account:
+        return jsonify({'success': False, 'error': '账号不存在'}), 404
+
+    try:
+        result = wake_account_mailbox(account)
+    except Exception as exc:
+        app.logger.warning('[mailbox-wake] 唤醒异常 account=%s: %s', account_id, exc)
+        result = {'success': False, 'error': f'唤醒失败：{exc}'}
+    if result.get('success'):
+        record_account_mailbox_wake(account_id, result.get('message', 'success'))
+        return jsonify(result)
+    record_account_mailbox_wake(account_id, f"failed: {result.get('error', '')}")
+    return jsonify(result), 502
 
 @app.route('/api/emails/mark-read', methods=['POST'])
 @login_required

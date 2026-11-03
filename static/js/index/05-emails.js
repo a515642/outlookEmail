@@ -759,6 +759,95 @@
             backgroundMailboxSyncs.set(syncKey, syncPromise);
         }
 
+        // ==================== 当前邮箱定时自动同步 ====================
+        let mailAutoSyncTimer = null;
+        let mailAutoSyncInFlight = false;
+        let mailAutoSyncVisibilityBound = false;
+
+        function canAutoSyncCurrentMailbox() {
+            if (!currentAccount || isTempEmailGroup) {
+                return false;
+            }
+            if (currentMethod === 'cloudflare-admin') {
+                return false;
+            }
+            return true;
+        }
+
+        async function runAutoMailboxSync() {
+            if (mailAutoSyncInFlight || document.hidden || !canAutoSyncCurrentMailbox()) {
+                return;
+            }
+            const syncKey = `${currentAccount}_${currentFolder}`;
+            if (backgroundMailboxSyncs.has(syncKey)) {
+                return;
+            }
+
+            const context = { account: currentAccount, folder: currentFolder };
+            mailAutoSyncInFlight = true;
+            try {
+                const response = await fetchWithTimeout(
+                    buildEmailListRequestUrl(currentAccount, {
+                        method: getRemoteMailboxMethodFallback(),
+                        folder: currentFolder,
+                        skip: 0,
+                        top: 20
+                    }),
+                    {
+                        timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
+                        timeoutMessage: '自动同步邮件超时'
+                    }
+                );
+                const data = await response.json();
+                if (!data?.success || !isCurrentMailboxContext(context)) {
+                    return;
+                }
+                const mergedPreview = mergeEmailListByStableKey(
+                    Array.isArray(currentEmails) ? currentEmails : [],
+                    Array.isArray(data.emails) ? data.emails : [],
+                    currentFolder
+                );
+                if (mergedPreview.newEmails.length === 0) {
+                    return;
+                }
+                queuePendingNewMailSync(
+                    getPendingNewMailSyncKey(context.account, context.folder),
+                    `${context.account}_${context.folder}`,
+                    data,
+                    {
+                        folder: context.folder,
+                        method: getRemoteMailboxMethodFallback(),
+                        context,
+                        announceNewRows: true
+                    }
+                );
+            } catch (error) {
+                // 自动同步按静默方式处理失败，避免周期性打扰用户
+            } finally {
+                mailAutoSyncInFlight = false;
+            }
+        }
+
+        function restartMailAutoSyncTimer() {
+            if (mailAutoSyncTimer) {
+                window.clearInterval(mailAutoSyncTimer);
+                mailAutoSyncTimer = null;
+            }
+            if (!mailAutoSyncVisibilityBound) {
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) {
+                        runAutoMailboxSync();
+                    }
+                });
+                mailAutoSyncVisibilityBound = true;
+            }
+            const intervalSeconds = Number(getMailAutoSyncSeconds());
+            if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+                return;
+            }
+            mailAutoSyncTimer = window.setInterval(runAutoMailboxSync, intervalSeconds * 1000);
+        }
+
         // 加载邮件列表
         async function loadEmails(email, forceRefresh = false) {
             const container = document.getElementById('emailList');

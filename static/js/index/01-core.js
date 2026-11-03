@@ -107,6 +107,7 @@
         let showGroupId = true;
         let showProjectManagement = false;
         let normalMailLocalRetentionEnabled = false;
+        let mailAutoSyncSeconds = 30;
 
         function normalizeTagFilterSelectionValue(value) {
             const normalized = Number.parseInt(String(value ?? '').trim(), 10);
@@ -219,6 +220,16 @@
 
         function isNormalMailLocalRetentionEnabled() {
             return normalMailLocalRetentionEnabled === true;
+        }
+
+        function setMailAutoSyncSeconds(value) {
+            const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+            mailAutoSyncSeconds = Number.isFinite(parsed) ? Math.max(0, Math.min(600, parsed)) : 30;
+            return mailAutoSyncSeconds;
+        }
+
+        function getMailAutoSyncSeconds() {
+            return mailAutoSyncSeconds;
         }
 
         function parseDateInput(dateInput) {
@@ -1542,6 +1553,7 @@
                 setShowGroupId(String(data?.settings?.show_group_id) !== 'false');
                 setShowProjectManagement(String(data?.settings?.show_project_management) === 'true');
                 setNormalMailLocalRetentionEnabled(String(data?.settings?.normal_mail_local_retention_enabled) === 'true');
+                setMailAutoSyncSeconds(data?.settings?.mail_auto_sync_seconds ?? 30);
                 return data?.settings || null;
             } catch (error) {
                 return null;
@@ -1555,6 +1567,9 @@
             // 初始化 CSRF Token
             await initCSRFToken();
             await loadAppTimeZoneFromSettings();
+            if (typeof restartMailAutoSyncTimer === 'function') {
+                restartMailAutoSyncTimer();
+            }
             ensureForwardingSettingsUI();
             bindPersistentButtonHandlers();
             document.addEventListener('click', closeAccountActionMenus);
@@ -1914,6 +1929,8 @@
                         showCreateEmailShareModal(accountId, accountEmail);
                     } else if (action === 'forwardingLogs') {
                         showAccountForwardingLogs(accountId, accountEmail);
+                    } else if (action === 'wake') {
+                        wakeAccountMailbox(accountId, accountEmail);
                     } else if (action === 'toggleStatus') {
                         toggleAccountStatus(accountId, accountStatus);
                     } else if (action === 'outlookAutoAuth') {

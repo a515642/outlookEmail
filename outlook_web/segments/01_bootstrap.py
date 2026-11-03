@@ -1391,6 +1391,8 @@ def init_db():
             last_refresh_error TEXT,
             last_refresh_token_rotated INTEGER,
             refresh_token_updated_at TIMESTAMP,
+            mailbox_last_wake_at TIMESTAMP,
+            mailbox_last_wake_status TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (group_id) REFERENCES groups (id)
@@ -1905,6 +1907,10 @@ def init_db():
         ''')
     if 'refresh_token_updated_at' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN refresh_token_updated_at TIMESTAMP')
+    if 'mailbox_last_wake_at' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN mailbox_last_wake_at TIMESTAMP')
+    if 'mailbox_last_wake_status' not in columns:
+        cursor.execute("ALTER TABLE accounts ADD COLUMN mailbox_last_wake_status TEXT DEFAULT ''")
     if 'account_type' not in columns:
         cursor.execute("ALTER TABLE accounts ADD COLUMN account_type TEXT DEFAULT 'outlook'")
     if 'provider' not in columns:
@@ -2234,6 +2240,18 @@ def init_db():
     cursor.execute('''
         INSERT OR IGNORE INTO settings (key, value)
         VALUES ('normal_mail_local_retention_enabled', 'false')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('mail_auto_sync_seconds', '30')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('mailbox_keepalive_enabled', 'false')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('mailbox_keepalive_interval_hours', '24')
     ''')
     cursor.execute('''
         INSERT OR IGNORE INTO settings (key, value)

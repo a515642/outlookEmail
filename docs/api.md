@@ -137,6 +137,7 @@
 | GET | `/api/accounts/<account_id>/forwarding-logs` | Session | JSON | 单账号转发日志 |
 | POST | `/api/accounts/trigger-forwarding-check` | Session + CSRF | JSON | 立即触发一次转发检查 |
 | POST | `/api/accounts/<account_id>/forwarding/reset-cursor` | Session + CSRF | JSON | 重置单账号转发游标 |
+| POST | `/api/accounts/<account_id>/wake` | Session + CSRF | JSON | 手动唤醒邮箱（切换最新邮件已读状态后恢复） |
 | GET | `/api/emails/<email_addr>` | Session | JSON | 获取内部邮件列表 |
 | POST | `/api/emails/mark-read` | Session + CSRF | JSON | 批量标记邮件为已读 |
 | POST | `/api/emails/delete` | Session + CSRF | JSON | 批量删除邮件 |
@@ -2410,6 +2411,27 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | `errors` | 失败详情列表 |
 | `error` | 第一条失败信息，兼容旧前端逻辑 |
 
+### POST `/api/accounts/<account_id>/wake`
+
+手动唤醒账号邮箱：读取收件箱最新一封邮件，把它的已读状态切换一次后立即恢复原状态。这是一次轻量的邮箱写操作，用于激活长期没有写活动、可能导致收信暂停的邮箱。
+
+#### 请求体
+
+无（可传空 JSON 对象）。
+
+#### 响应重点字段
+
+| 字段 | 说明 |
+| --- | --- |
+| `success` | 是否完成唤醒写操作 |
+| `message` | 结果说明 |
+| `message_id` | 被用于唤醒的邮件 ID |
+| `original_is_read` | 该邮件唤醒前的已读状态 |
+| `restored` | 是否成功恢复原已读状态；为 `false` 时说明唤醒已完成但恢复失败 |
+| `error` | 失败原因 |
+
+服务端会在成功后把唤醒时间写入账号的 `mailbox_last_wake_at`。长期自动保活由设置 `mailbox_keepalive_enabled` 与 `mailbox_keepalive_interval_hours` 控制。
+
 ### POST `/api/emails/retain-bodies`
 
 为已保留的普通邮箱列表行补齐详情正文缓存，供本地优先列表、新邮件提示合并后和后续离线详情回退使用。该接口只在 `normal_mail_local_retention_enabled=true` 时执行；关闭时返回 `local_retention_enabled=false` 并跳过所有项目。
@@ -2775,6 +2797,9 @@ POST /api/cloudflare/channels
 | `telegram_chat_id` | Telegram Chat ID |
 | `telegram_topic_id` | Telegram Topic ID（可选，话题群组的 message_thread_id） |
 | `normal_mail_local_retention_enabled` | 是否启用普通邮箱本地保留 |
+| `mail_auto_sync_seconds` | 当前打开邮件的后台自动同步间隔秒数，`0` 表示关闭，默认 `30` |
+| `mailbox_keepalive_enabled` | 是否启用服务端邮箱保活唤醒，默认 `false` |
+| `mailbox_keepalive_interval_hours` | 邮箱保活唤醒间隔小时数，范围 `1-720`，默认 `24` |
 
 ### PUT `/api/settings`
 
@@ -2801,6 +2826,9 @@ POST /api/cloudflare/channels
 | `external_api_key` | string | 对外 API Key，可传空字符串清空 |
 | `external_api_key_permission` | string | 对外 API Key 权限：`readonly` 或 `readwrite`，大小写不敏感；非法值返回 HTTP 400，不传该字段时保持现有值 |
 | `normal_mail_local_retention_enabled` | bool/string | 是否启用普通邮箱本地保留；通过 `/api/settings` 更新会同步刷新后端进程内读取缓存 |
+| `mail_auto_sync_seconds` | int | 当前打开邮箱的后台自动同步间隔，范围 `0-600`，`0` 表示关闭 |
+| `mailbox_keepalive_enabled` | bool/string | 是否启用服务端邮箱保活唤醒；开启后会按间隔对长期无写活动的活跃邮箱执行一次轻量唤醒写操作 |
+| `mailbox_keepalive_interval_hours` | int | 邮箱保活唤醒间隔小时数，范围 `1-720` |
 
 说明：修改 `login_password` 时必须提供正确的 `current_login_password`；改密成功后服务端会轮换登录会话版本，其他已登录的 Web Session 需要重新登录，当前改密会话保持有效。
 

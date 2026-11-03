@@ -1821,6 +1821,13 @@
                     const mailFetchTimeoutSeconds = data.settings.mail_fetch_timeout_seconds || '120';
                     document.getElementById('mailFetchTimeoutSeconds').value = mailFetchTimeoutSeconds;
                     setMailFetchTimeoutSeconds(mailFetchTimeoutSeconds);
+                    const mailAutoSyncSeconds = String(data.settings.mail_auto_sync_seconds ?? '30');
+                    document.getElementById('mailAutoSyncSeconds').value = mailAutoSyncSeconds;
+                    setMailAutoSyncSeconds(mailAutoSyncSeconds);
+                    document.getElementById('mailboxKeepaliveEnabled').checked =
+                        parseSettingsBoolean(data.settings.mailbox_keepalive_enabled);
+                    document.getElementById('mailboxKeepaliveIntervalHours').value =
+                        data.settings.mailbox_keepalive_interval_hours || '24';
                     document.getElementById('settingsShowAccountCreatedAt').checked = String(data.settings.show_account_created_at) !== 'false';
                     document.getElementById('settingsShowAccountSortOrder').checked = String(data.settings.show_account_sort_order) === 'true';
                     document.getElementById('settingsShowGroupId').checked = String(data.settings.show_group_id) !== 'false';
@@ -1888,6 +1895,9 @@
             const strategy = document.querySelector('input[name="refreshStrategy"]:checked').value;
             const enableScheduled = document.getElementById('enableScheduledRefresh').checked;
             const mailFetchTimeoutSeconds = parseInt(document.getElementById('mailFetchTimeoutSeconds').value || '120', 10);
+            const mailAutoSyncSeconds = parseInt(document.getElementById('mailAutoSyncSeconds')?.value || '30', 10);
+            const mailboxKeepaliveEnabled = !!document.getElementById('mailboxKeepaliveEnabled')?.checked;
+            const mailboxKeepaliveIntervalHours = parseInt(document.getElementById('mailboxKeepaliveIntervalHours')?.value || '24', 10);
             const showAccountCreatedAt = !!document.getElementById('settingsShowAccountCreatedAt')?.checked;
             const showAccountSortOrder = !!document.getElementById('settingsShowAccountSortOrder')?.checked;
             const showGroupId = !!document.getElementById('settingsShowGroupId')?.checked;
@@ -1968,6 +1978,14 @@
             }
             if (Number.isNaN(mailFetchTimeoutSeconds) || mailFetchTimeoutSeconds < 30 || mailFetchTimeoutSeconds > 300) {
                 showToast('邮件获取超时必须在 30-300 秒之间', 'error');
+                return;
+            }
+            if (Number.isNaN(mailAutoSyncSeconds) || mailAutoSyncSeconds < 0 || mailAutoSyncSeconds > 600) {
+                showToast('邮件自动同步间隔必须在 0-600 秒之间（0 表示关闭）', 'error');
+                return;
+            }
+            if (Number.isNaN(mailboxKeepaliveIntervalHours) || mailboxKeepaliveIntervalHours < 1 || mailboxKeepaliveIntervalHours > 720) {
+                showToast('邮箱保活间隔必须在 1-720 小时之间', 'error');
                 return;
             }
             if (typeof isDedicatedForwardingUI !== 'function' || !isDedicatedForwardingUI()) {
@@ -2061,6 +2079,9 @@
             settings.enable_scheduled_refresh = enableScheduled;
             settings.app_timezone = appTimeZone;
             settings.mail_fetch_timeout_seconds = mailFetchTimeoutSeconds;
+            settings.mail_auto_sync_seconds = mailAutoSyncSeconds;
+            settings.mailbox_keepalive_enabled = mailboxKeepaliveEnabled;
+            settings.mailbox_keepalive_interval_hours = mailboxKeepaliveIntervalHours;
             settings.show_account_created_at = showAccountCreatedAt;
             settings.show_account_sort_order = showAccountSortOrder;
             settings.show_group_id = showGroupId;
@@ -2147,6 +2168,10 @@
             setShowGroupId(showGroupId);
             setShowProjectManagement(showProjectManagement);
             setMailFetchTimeoutSeconds(mailFetchTimeoutSeconds);
+            setMailAutoSyncSeconds(mailAutoSyncSeconds);
+            if (typeof restartMailAutoSyncTimer === 'function') {
+                restartMailAutoSyncTimer();
+            }
             setNormalMailLocalRetentionEnabled(normalMailLocalRetentionEnabled);
             if (wasRetentionEnabled && !normalMailLocalRetentionEnabled
                 && typeof invalidateNormalMailRetentionCaches === 'function') {

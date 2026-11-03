@@ -196,6 +196,31 @@
             }
         }
 
+        // 唤醒邮箱：对最新邮件做一次已读状态切换并立即恢复，用于激活长期无写活动的邮箱
+        async function wakeAccountMailbox(accountId, email) {
+            if (!accountId) {
+                return;
+            }
+            setMailSyncStatus(`正在唤醒邮箱 ${email || ''}…`);
+            try {
+                const response = await fetch(`/api/accounts/${accountId}/wake`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json().catch(() => ({}));
+                setMailSyncStatus('');
+                if (response.ok && data.success) {
+                    showToast(`${email || '邮箱'} 已唤醒${data.restored === false ? '（原已读状态恢复失败）' : ''}`, data.restored === false ? 'warning' : 'success');
+                } else {
+                    handleApiError(data, `${email || '邮箱'} 唤醒失败`);
+                }
+            } catch (error) {
+                setMailSyncStatus('');
+                showToast(`${email || '邮箱'} 唤醒失败`, 'error');
+            }
+        }
+
         // 删除账号（快捷方式）
         async function deleteAccount(accountId, email) {
             if (!(await showConfirmModal(`确定要删除账号 ${email} 吗？`, { title: '删除账号', confirmText: '确认删除' }))) {
