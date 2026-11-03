@@ -50,8 +50,14 @@
         if (mailboxState) mailboxState.hidden = true;
     }
 
+    function setSwitchMailboxVisible(visible) {
+        const switchBtn = document.getElementById('switchMailboxBtn');
+        if (switchBtn) switchBtn.hidden = !visible;
+    }
+
     function showInvalid(message) {
         isShareReady = false;
+        setSwitchMailboxVisible(false);
         const accessCodeState = document.getElementById('shareAccessCodeState');
         if (accessCodeState) accessCodeState.hidden = true;
         hideMailboxPrompt();
@@ -78,11 +84,13 @@
         const appBody = document.getElementById('appBody');
         if (appBody) appBody.style.display = 'flex';
 
+        setSwitchMailboxVisible(isGroupShare);
         setStatus('连接有效', 'active');
     }
 
     function showAccessCodePrompt() {
         isShareReady = false;
+        setSwitchMailboxVisible(false);
         const appBody = document.getElementById('appBody');
         if (appBody) appBody.style.display = 'none';
         const invalid = document.getElementById('shareInvalidState');
@@ -97,6 +105,7 @@
 
     function showMailboxPrompt(name) {
         isShareReady = false;
+        setSwitchMailboxVisible(false);
         if (name) groupName = name;
         const appBody = document.getElementById('appBody');
         if (appBody) appBody.style.display = 'none';
@@ -846,6 +855,49 @@
         }
     }
 
+    async function switchVerifiedMailbox() {
+        if (!isGroupShare) return;
+        const switchBtn = document.getElementById('switchMailboxBtn');
+        if (!switchBtn || switchBtn.disabled) return;
+        switchBtn.disabled = true;
+        try {
+            await requestJson(`${apiBase}/switch-mailbox`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                },
+                body: JSON.stringify({})
+            });
+
+            // 切换邮箱时清空上一邮箱的列表与详情状态，避免验证新邮箱后残留旧数据。
+            currentEmails = [];
+            currentSkip = 0;
+            hasMore = false;
+            selectedEmailId = null;
+            isLoading = false;
+            currentFolder = 'inbox';
+            document.querySelectorAll('.folder-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.folder === 'inbox');
+            });
+            const searchInput = document.getElementById('emailSearchInput');
+            if (searchInput) searchInput.value = '';
+            const clearBtn = document.getElementById('searchClearBtn');
+            if (clearBtn) clearBtn.hidden = true;
+
+            showMailboxPrompt(groupName);
+            showToast('已退出当前邮箱，请验证新的邮箱地址');
+        } catch (error) {
+            if (['expired', 'revoked', 'invalid'].includes(error.status)) {
+                showInvalid(error.message);
+            } else {
+                showToast(error.message || '切换邮箱失败，请重试');
+            }
+        } finally {
+            switchBtn.disabled = false;
+        }
+    }
+
     // --- Setup Initialization ---
     async function initializeSharePage() {
         setupTheme();
@@ -886,6 +938,12 @@
         const emailItem = event.target.closest('.email-item-btn');
         if (emailItem) {
             selectEmail(emailItem.dataset.id);
+            return;
+        }
+
+        // Switch verified mailbox (group share)
+        if (event.target.closest('#switchMailboxBtn')) {
+            switchVerifiedMailbox();
             return;
         }
 

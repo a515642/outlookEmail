@@ -253,6 +253,67 @@ class GroupShareLinkTests(unittest.TestCase):
         self.assertEqual(other_client.get(f'/api/share/group/{token}/status').status_code, 403)
         self.assertEqual(other_client.get(f'/api/share/group/{token}/emails').status_code, 403)
 
+    def test_switch_mailbox_clears_previous_grant_and_allows_verifying_another(self):
+        group_id = self._create_group()
+        self._insert_account('first@example.com', group_id)
+        self._insert_account('second@example.com', group_id)
+        share = self._create_share(group_id)
+        anonymous, token = self._granted_client(share, 'first@example.com', access_code='')
+
+        self.assertEqual(anonymous.get(f'/api/share/group/{token}/status').get_json()['email'],
+                         'first@example.com')
+
+        switched = anonymous.post(f'/api/share/group/{token}/switch-mailbox', json={})
+        self.assertEqual(switched.status_code, 200)
+        body = switched.get_json()
+        self.assertTrue(body['success'])
+        self.assertEqual(body['status'], 'mailbox_required')
+        self.assertTrue(body['requires_email'])
+
+        pending = anonymous.get(f'/api/share/group/{token}/status').get_json()
+        self.assertTrue(pending['requires_email'])
+        self.assertNotIn('email', pending)
+        self.assertEqual(anonymous.get(f'/api/share/group/{token}/emails').status_code, 403)
+
+        self.assertEqual(self._verify_email(anonymous, token, 'second@example.com').status_code, 200)
+        self.assertEqual(anonymous.get(f'/api/share/group/{token}/status').get_json()['email'],
+                         'second@example.com')
+
+    def test_switch_mailbox_keeps_access_code_grant(self):
+        group_id = self._create_group()
+        self._insert_account('first@example.com', group_id)
+        share = self._create_share(group_id, access_code='Ab12')
+        anonymous, token = self._granted_client(share, 'first@example.com')
+
+        switched = anonymous.post(f'/api/share/group/{token}/switch-mailbox', json={})
+        self.assertEqual(switched.status_code, 200)
+
+        # 访问码仍然有效：状态直接返回 mailbox_required 而不是 access_code_required。
+        pending = anonymous.get(f'/api/share/group/{token}/status')
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(pending.get_json()['status'], 'mailbox_required')
+
+        other_client = self.app.test_client()
+        self.assertEqual(
+            other_client.post(f'/api/share/group/{token}/switch-mailbox', json={}).status_code,
+            403,
+        )
+        self.assertTrue(
+            other_client.post(f'/api/share/group/{token}/switch-mailbox', json={})
+            .get_json()['requires_access_code']
+        )
+
+    def test_switch_mailbox_rejects_revoked_share(self):
+        group_id = self._create_group()
+        self._insert_account('member@example.com', group_id)
+        share = self._create_share(group_id)
+        anonymous, token = self._granted_client(share, 'member@example.com', access_code='')
+
+        self.client.post(f"/api/group-shares/{share['id']}/cancel")
+        response = anonymous.post(f'/api/share/group/{token}/switch-mailbox', json={})
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(response.get_json()['success'])
+
     def test_mailbox_verification_accepts_only_primary_active_members(self):
         group_id = self._create_group()
         child_group_id = self._create_group()

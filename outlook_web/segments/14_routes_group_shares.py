@@ -649,6 +649,25 @@ def api_group_share_verify_email(token):
     })
 
 
+@app.route('/api/share/group/<token>/switch-mailbox', methods=['POST'])
+def api_group_share_switch_mailbox(token):
+    share = get_group_share_row_by_token(token)
+    status = get_group_share_status(share or {})
+    if status != EMAIL_SHARE_STATUS_ACTIVE:
+        return group_share_error_response(status)
+    if not has_email_share_access(share):
+        return group_share_error_response(EMAIL_SHARE_STATUS_ACCESS_CODE_REQUIRED)
+
+    # 只清除已验证邮箱，保留同一链接的访问码授权，避免切换时重复输入访问码。
+    remove_group_share_mailbox_grant(share)
+    return jsonify({
+        'success': True,
+        'status': GROUP_SHARE_STATUS_MAILBOX_REQUIRED,
+        'requires_email': True,
+        'group_name': share.get('group_name', ''),
+    })
+
+
 @app.route('/api/share/group/<token>/emails', methods=['GET'])
 def api_group_share_get_emails(token):
     folder, folder_error = normalize_email_share_folder_response(request.args.get('folder', 'inbox'))

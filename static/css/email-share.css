@@ -390,6 +390,41 @@ button {
     height: 18px;
 }
 
+.switch-mailbox-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-hover);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.switch-mailbox-btn[hidden] {
+    display: none;
+}
+
+.switch-mailbox-btn:hover:not(:disabled) {
+    background-color: var(--bg-active);
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+}
+
+.switch-mailbox-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.switch-mailbox-btn i {
+    width: 15px;
+    height: 15px;
+}
+
 .moon-icon {
     display: block;
 }
@@ -1202,5 +1237,19 @@ button {
     
     .detail-card {
         padding: 16px;
+    }
+
+    .header-right {
+        gap: 8px;
+    }
+
+    .switch-mailbox-btn {
+        width: 34px;
+        padding: 0;
+        justify-content: center;
+    }
+
+    .switch-mailbox-btn span {
+        display: none;
     }
 }

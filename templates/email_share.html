@@ -48,6 +48,12 @@
                     <span class="status-dot"></span>
                     <span id="shareStatusText">检查中</span>
                 </div>
+                {% if share_kind == 'group' %}
+                <button class="switch-mailbox-btn" id="switchMailboxBtn" type="button" hidden>
+                    <i data-lucide="refresh-cw"></i>
+                    <span>切换邮箱</span>
+                </button>
+                {% endif %}
                 <button class="theme-toggle" id="themeToggleBtn" type="button" aria-label="切换主题">
                     <i data-lucide="sun" class="sun-icon"></i>
                     <i data-lucide="moon" class="moon-icon"></i>
