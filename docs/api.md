@@ -2413,7 +2413,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 
 ### POST `/api/accounts/<account_id>/wake`
 
-手动唤醒账号邮箱：读取收件箱最新一封邮件，把它的已读状态切换一次后立即恢复原状态。这是一次轻量的邮箱写操作，用于激活长期没有写活动、可能导致收信暂停的邮箱。
+手动唤醒账号邮箱：读取收件箱最新一封邮件，把它的已读状态切换一次后立即恢复原状态。这是一次轻量的邮箱写操作，用于激活长期没有写活动、可能导致收信暂停的邮箱。若收件箱为空，则改为创建并立即删除一个临时文件夹（`_outlook_mail_wake_*`）完成写活动；优先使用邮件列表当前可用的通道（Graph 或 Outlook IMAP），失败时自动尝试另一通道。
 
 #### 请求体
 
@@ -2425,9 +2425,11 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | --- | --- |
 | `success` | 是否完成唤醒写操作 |
 | `message` | 结果说明 |
-| `message_id` | 被用于唤醒的邮件 ID |
-| `original_is_read` | 该邮件唤醒前的已读状态 |
+| `message_id` | 被用于唤醒的邮件 ID；收件箱为空时为空字符串 |
+| `original_is_read` | 该邮件唤醒前的已读状态；收件箱为空时为 `null` |
 | `restored` | 是否成功恢复原已读状态；为 `false` 时说明唤醒已完成但恢复失败 |
+| `empty_inbox` | 收件箱为空、改走临时文件夹写操作时为 `true` |
+| `cleaned` | 临时文件夹是否已成功删除；为 `false` 时需手动清理 |
 | `error` | 失败原因 |
 
 服务端会在成功后把唤醒时间写入账号的 `mailbox_last_wake_at`。长期自动保活由设置 `mailbox_keepalive_enabled` 与 `mailbox_keepalive_interval_hours` 控制。
@@ -2829,7 +2831,7 @@ POST /api/cloudflare/channels
 | `external_api_key_permission` | string | 对外 API Key 权限：`readonly` 或 `readwrite`，大小写不敏感；非法值返回 HTTP 400，不传该字段时保持现有值 |
 | `normal_mail_local_retention_enabled` | bool/string | 是否启用普通邮箱本地保留；通过 `/api/settings` 更新会同步刷新后端进程内读取缓存 |
 | `mail_auto_sync_seconds` | int | 当前打开邮箱的后台自动同步间隔，范围 `0-600`，`0` 表示关闭 |
-| `mailbox_keepalive_enabled` | bool/string | 是否启用服务端邮箱保活唤醒；开启后会按间隔对长期无写活动的活跃 Outlook 邮箱执行一次轻量唤醒写操作，自定义 IMAP 邮箱不会被纳入 |
+| `mailbox_keepalive_enabled` | bool/string | 是否启用服务端邮箱保活唤醒；开启后会按间隔对长期无写活动的活跃 Outlook 邮箱执行一次轻量唤醒写操作（收件箱为空时改用临时文件夹写操作），自定义 IMAP 邮箱不会被纳入 |
 | `mailbox_keepalive_interval_hours` | int | 邮箱保活唤醒间隔小时数，范围 `1-720` |
 
 说明：修改 `login_password` 时必须提供正确的 `current_login_password`；改密成功后服务端会轮换登录会话版本，其他已登录的 Web Session 需要重新登录，当前改密会话保持有效。

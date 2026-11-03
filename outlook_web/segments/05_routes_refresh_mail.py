@@ -2557,8 +2557,139 @@ def set_account_email_read_state(account: Dict[str, Any], items: List[Dict[str, 
     return merge_email_action_results(results)
 
 
+WAKE_TEMP_FOLDER_PREFIX = '_outlook_mail_wake_'
+
+
+def wake_mailbox_with_temp_folder_graph(account: Dict[str, Any], folder_name: str, proxy_url: str,
+                                        fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    """收件箱为空时，通过 Graph 创建并删除一个临时文件夹制造一次写活动。"""
+    token_result = get_access_token_graph_result(
+        account['client_id'], account['refresh_token'], proxy_url, fallback_proxy_urls,
+    )
+    if not token_result.get('success'):
+        return {'success': False, 'error': '获取 Graph 访问令牌失败', 'details': token_result.get('error')}
+
+    auth_header = {'Authorization': f"Bearer {token_result.get('access_token')}"}
+    try:
+        response = request_with_proxy_failover(
+            'post',
+            'https://graph.microsoft.com/v1.0/me/mailFolders',
+            headers={**auth_header, 'Content-Type': 'application/json'},
+            json={'displayName': folder_name},
+            timeout=HTTP_REQUEST_TIMEOUT,
+            proxy_url=proxy_url,
+            fallback_proxy_urls=fallback_proxy_urls,
+        )
+        if response.status_code not in {200, 201}:
+            return {
+                'success': False,
+                'error': f'创建临时文件夹失败（HTTP {response.status_code}）',
+                'details': get_response_details(response),
+            }
+        folder_id = str((response.json() or {}).get('id') or '').strip()
+        if not folder_id:
+            return {'success': False, 'error': '创建临时文件夹未返回 ID'}
+    except Exception as exc:
+        return {'success': False, 'error': f'创建临时文件夹异常：{exc}'}
+
+    cleaned = False
+    for attempt in range(2):
+        try:
+            delete_response = request_with_proxy_failover(
+                'delete',
+                f'https://graph.microsoft.com/v1.0/me/mailFolders/{folder_id}',
+                headers=auth_header,
+                timeout=HTTP_REQUEST_TIMEOUT,
+                proxy_url=proxy_url,
+                fallback_proxy_urls=fallback_proxy_urls,
+            )
+            if delete_response.status_code in {200, 204}:
+                cleaned = True
+                break
+        except Exception:
+            pass
+    return {'success': True, 'cleaned': cleaned}
+
+
+def wake_mailbox_with_temp_folder_imap(account: Dict[str, Any], folder_name: str, proxy_url: str,
+                                       fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    """收件箱为空时，通过 Outlook IMAP 创建并删除一个临时文件夹制造一次写活动。"""
+    token_result = get_access_token_imap_result(
+        account['client_id'], account['refresh_token'], proxy_url, fallback_proxy_urls,
+    )
+    if not token_result.get('success'):
+        return {'success': False, 'error': '获取 IMAP 访问令牌失败', 'details': token_result.get('error')}
+
+    access_token = token_result.get('access_token')
+    last_error = ''
+    for server in (IMAP_SERVER_NEW, IMAP_SERVER_OLD):
+        connection = None
+        try:
+            with proxy_socket_context(proxy_url):
+                connection = imaplib.IMAP4_SSL(server, IMAP_PORT, timeout=IMAP_TIMEOUT)
+            auth_string = f"user={account['email']}\1auth=Bearer {access_token}\1\1".encode('utf-8')
+            connection.authenticate('XOAUTH2', lambda x: auth_string)
+            status, _ = connection.create(folder_name)
+            if status != 'OK':
+                last_error = f'IMAP 创建临时文件夹失败：{server}'
+                continue
+            cleaned = False
+            try:
+                delete_status, _ = connection.delete(folder_name)
+                cleaned = delete_status == 'OK'
+            except Exception:
+                cleaned = False
+            return {'success': True, 'cleaned': cleaned}
+        except Exception as exc:
+            last_error = f'IMAP 写操作异常：{exc}'
+        finally:
+            if connection:
+                try:
+                    connection.logout()
+                except Exception:
+                    pass
+    return {'success': False, 'error': last_error or 'IMAP 写操作失败'}
+
+
+def wake_empty_account_mailbox(account: Dict[str, Any], request_method: str, proxy_url: str,
+                               fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    """收件箱为空时的唤醒：用临时文件夹的创建/删除作为轻量写活动，清理失败会明确提示。"""
+    folder_name = f'{WAKE_TEMP_FOLDER_PREFIX}{secrets.token_hex(4)}'
+    preferred = 'imap' if str(request_method or '').strip().lower() == 'imap' else 'graph'
+    channels = [preferred, 'imap' if preferred == 'graph' else 'graph']
+    errors = []
+    for channel in channels:
+        try:
+            if channel == 'imap':
+                result = wake_mailbox_with_temp_folder_imap(account, folder_name, proxy_url, fallback_proxy_urls)
+            else:
+                result = wake_mailbox_with_temp_folder_graph(account, folder_name, proxy_url, fallback_proxy_urls)
+        except Exception as exc:
+            result = {'success': False, 'error': f'临时文件夹写操作异常：{exc}'}
+        if result.get('success'):
+            cleaned = result.get('cleaned', True)
+            return {
+                'success': True,
+                'message': '收件箱为空，已通过临时文件夹写操作唤醒邮箱'
+                           + ('' if cleaned else '（临时文件夹清理失败，请稍后手动删除）'),
+                'message_id': '',
+                'original_is_read': None,
+                'restored': True,
+                'empty_inbox': True,
+                'cleaned': cleaned,
+                'channel': channel,
+                'details': [],
+            }
+        errors.append({'channel': channel, 'error': result.get('error')})
+    return {
+        'success': False,
+        'error': '收件箱为空，临时文件夹写操作失败',
+        'details': errors,
+    }
+
+
 def wake_account_mailbox(account: Dict[str, Any]) -> Dict[str, Any]:
-    """对 Outlook 邮箱执行一次轻量写操作（切换最新邮件的已读状态后立即恢复），用于唤醒长期无写活动的邮箱。"""
+    """对 Outlook 邮箱执行一次轻量写操作，用于唤醒长期无写活动的邮箱。"""
     if str(account.get('account_type') or 'outlook').lower() == 'imap':
         return {'success': False, 'error': '邮箱保活唤醒仅支持 Outlook 邮箱，自定义 IMAP 邮箱不支持'}
     if account.get('icloud_address'):
@@ -2574,7 +2705,9 @@ def wake_account_mailbox(account: Dict[str, Any]) -> Dict[str, Any]:
 
     emails = fetch_result.get('emails') or []
     if not emails:
-        return {'success': False, 'error': '收件箱暂无邮件，跳过唤醒写操作'}
+        return wake_empty_account_mailbox(
+            account, fetch_result.get('request_method', ''), proxy_url, fallback_proxy_urls,
+        )
 
     latest = emails[0]
     message_id = str(latest.get('id') or '').strip()

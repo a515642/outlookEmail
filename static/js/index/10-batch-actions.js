@@ -869,6 +869,7 @@
             let successCount = 0;
             let failedCount = 0;
             let restoreFailedCount = 0;
+            let cleanupFailedCount = 0;
             let firstError = '';
 
             try {
@@ -886,6 +887,9 @@
                             if (data.restored === false) {
                                 restoreFailedCount += 1;
                             }
+                            if (data.cleaned === false) {
+                                cleanupFailedCount += 1;
+                            }
                         } else {
                             failedCount += 1;
                             if (!firstError) {
@@ -902,12 +906,13 @@
 
                 const parts = [`成功 ${successCount}`];
                 if (restoreFailedCount > 0) parts.push(`已唤醒但恢复原状态失败 ${restoreFailedCount}`);
+                if (cleanupFailedCount > 0) parts.push(`临时文件夹清理失败 ${cleanupFailedCount}`);
                 if (failedCount > 0) parts.push(`失败 ${failedCount}`);
                 if (skippedCount > 0) parts.push(`跳过 ${skippedCount}`);
                 const errorSuffix = firstError ? `（首个失败：${firstError}）` : '';
                 showToast(
                     `批量唤醒完成：${parts.join('，')}${errorSuffix}`,
-                    failedCount > 0 || restoreFailedCount > 0 ? 'warning' : 'success'
+                    failedCount > 0 || restoreFailedCount > 0 || cleanupFailedCount > 0 ? 'warning' : 'success'
                 );
             } finally {
                 btn.dataset.loading = 'false';

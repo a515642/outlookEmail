@@ -95,19 +95,60 @@ class MailboxWakeTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNotNone(row['mailbox_last_wake_at'])
 
-    def test_wake_returns_error_when_inbox_has_no_messages(self):
-        empty_result = {'success': True, 'emails': [], 'method': 'Graph API', 'has_more': False}
+    def test_empty_inbox_falls_back_to_temp_folder_write(self):
+        empty_result = {
+            'success': True,
+            'emails': [],
+            'method': 'Graph API',
+            'has_more': False,
+            'request_method': 'graph',
+        }
 
         with patch.object(web_outlook_app, 'fetch_account_folder_emails',
                           return_value=empty_result), \
+                patch.object(web_outlook_app, 'wake_mailbox_with_temp_folder_graph',
+                             return_value={'success': True, 'cleaned': True}) as graph_mock, \
                 patch.object(web_outlook_app, 'set_account_email_read_state') as write_mock:
+            response = self.client.post(f'/api/accounts/{self.account["id"]}/wake', json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertTrue(payload['empty_inbox'])
+        self.assertTrue(payload['cleaned'])
+        self.assertIn('临时文件夹', payload['message'])
+        graph_mock.assert_called_once()
+        write_mock.assert_not_called()
+
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                'SELECT mailbox_last_wake_at FROM accounts WHERE id = ?',
+                (self.account['id'],),
+            ).fetchone()
+        self.assertIsNotNone(row['mailbox_last_wake_at'])
+
+    def test_empty_inbox_reports_error_when_temp_folder_channels_fail(self):
+        empty_result = {
+            'success': True,
+            'emails': [],
+            'method': 'Graph API',
+            'has_more': False,
+            'request_method': 'graph',
+        }
+
+        with patch.object(web_outlook_app, 'fetch_account_folder_emails',
+                          return_value=empty_result), \
+                patch.object(web_outlook_app, 'wake_mailbox_with_temp_folder_graph',
+                             return_value={'success': False, 'error': 'graph failed'}), \
+                patch.object(web_outlook_app, 'wake_mailbox_with_temp_folder_imap',
+                             return_value={'success': False, 'error': 'imap failed'}):
             response = self.client.post(f'/api/accounts/{self.account["id"]}/wake', json={})
 
         self.assertEqual(response.status_code, 502)
         payload = response.get_json()
         self.assertFalse(payload['success'])
-        self.assertIn('收件箱暂无邮件', payload['error'])
-        write_mock.assert_not_called()
+        self.assertIn('收件箱为空', payload['error'])
+        self.assertEqual(len(payload['details']), 2)
 
     def test_wake_rejects_imap_accounts(self):
         with self.app.app_context():
