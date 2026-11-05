@@ -3,6 +3,8 @@
         // ==================== 分组相关 ====================
 
         const ACCOUNT_SEARCH_MAX_TERMS = 200;
+        const ACCOUNT_SEARCH_EXPORT_SEPARATOR = '----';
+        const ACCOUNT_SEARCH_INPUT_MAX_HEIGHT = 160;
         const ACCOUNT_SEARCH_QUERY_STORAGE_KEY = 'outlook_account_search_query';
         const ACCOUNT_SORT_STORAGE_KEY = 'outlook_account_sort';
         const ACCOUNT_TAG_FILTER_STORAGE_KEY = 'outlook_account_tag_filters';
@@ -1002,7 +1004,8 @@
                 syncAccountSortButtons();
                 updateTagFilter();
                 if (searchInput) {
-                    searchInput.placeholder = '邮箱|别名|备注|标签';
+                    searchInput.placeholder = '邮箱|别名|备注|标签（每行一个）';
+                    autoResizeAccountSearchInput(searchInput);
                 }
             }
             if (typeof syncAccountMoreActiveDot === 'function') {
@@ -1163,6 +1166,7 @@
             if (savedQuery !== null) {
                 input.value = savedQuery;
             }
+            window.requestAnimationFrame(() => autoResizeAccountSearchInput(input));
         }
 
         function setAccountSearchScope(value, persist = true) {
@@ -1839,8 +1843,32 @@
                 return [];
             }
 
-            const splitTerms = normalizedQuery.split(/\s+/).filter(Boolean);
-            return Array.from(new Set(splitTerms));
+            // 一行一个关键词；粘贴账号导出内容（邮箱----密码----client_id----refresh_token）时只取邮箱部分。
+            const terms = [];
+            normalizedQuery.split(/\r?\n/).forEach(rawLine => {
+                let line = rawLine.trim();
+                if (!line) return;
+                const separatorIndex = line.indexOf(ACCOUNT_SEARCH_EXPORT_SEPARATOR);
+                if (separatorIndex !== -1) {
+                    line = line.slice(0, separatorIndex).trim();
+                }
+                if (!line) return;
+                line.split(/\s+/).filter(Boolean).forEach(term => terms.push(term));
+            });
+            return Array.from(new Set(terms));
+        }
+
+        function autoResizeAccountSearchInput(input) {
+            const textarea = input || document.getElementById('globalSearch');
+            if (!textarea || textarea.tagName !== 'TEXTAREA') {
+                return;
+            }
+            textarea.style.height = 'auto';
+            const nextHeight = Math.min(
+                Math.max(textarea.scrollHeight, 40),
+                ACCOUNT_SEARCH_INPUT_MAX_HEIGHT
+            );
+            textarea.style.height = `${nextHeight}px`;
         }
 
         function matchesAccountSearchTerms(fields, query) {

@@ -2743,7 +2743,8 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
 
         self.assertNotIn('isAccountEmailSearchTerm', groups_js)
         self.assertNotIn('splitTerms.every', groups_js)
-        self.assertIn('return Array.from(new Set(splitTerms));', groups_js)
+        self.assertIn('return Array.from(new Set(terms));', groups_js)
+        self.assertIn("ACCOUNT_SEARCH_EXPORT_SEPARATOR = '----'", groups_js)
         self.assertIn('ACCOUNT_SEARCH_MAX_TERMS = 200', groups_js)
         self.assertIn('搜索关键词最多支持 200 个', groups_js)
 

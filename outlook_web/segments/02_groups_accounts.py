@@ -557,6 +557,7 @@ def build_account_tag_filter_clause(tag_ids: Any = None, include_untagged: bool 
 
 
 ACCOUNT_SEARCH_MAX_TERMS = 200
+ACCOUNT_SEARCH_EXPORT_SEPARATOR = '----'
 
 
 def normalize_account_search_terms(query: Any) -> List[str]:
@@ -564,7 +565,19 @@ def normalize_account_search_terms(query: Any) -> List[str]:
     if not normalized_query:
         return []
 
-    raw_terms = [term.strip() for term in re.split(r'\s+', normalized_query) if term.strip()]
+    raw_terms: List[str] = []
+    # 支持多行搜索：一行一个关键词；同时兼容直接粘贴账号导出内容
+    # （邮箱----密码----client_id----refresh_token）。
+    for raw_line in normalized_query.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if ACCOUNT_SEARCH_EXPORT_SEPARATOR in line:
+            line = line.split(ACCOUNT_SEARCH_EXPORT_SEPARATOR, 1)[0].strip()
+        if not line:
+            continue
+        raw_terms.extend(term for term in re.split(r'\s+', line) if term)
+
     terms: List[str] = []
     seen = set()
     for raw_term in raw_terms:
