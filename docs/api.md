@@ -73,7 +73,7 @@
 | GET | `/api/accounts/export` | Session | `text/plain` 下载 | 导出全部账号 |
 | POST | `/api/accounts/export-selected` | Session + CSRF | `text/plain` 下载 | 导出选中分组或选中账号 |
 | GET | `/api/accounts` | Session | JSON | 获取账号列表 |
-| GET | `/api/accounts/search` | Session | JSON | 搜索账号 |
+| GET / POST | `/api/accounts/search` | Session（POST 需 CSRF） | JSON | 搜索账号，长搜索词请用 POST |
 | GET | `/api/accounts/<account_id>` | Session | JSON | 获取单个账号，不返回账号密码和 IMAP 密码明文 |
 | POST | `/api/accounts/<account_id>/secrets` | Session + CSRF | JSON | 二次验证后获取账号密码和 IMAP 密码 |
 | POST | `/api/accounts` | Session + CSRF | JSON | 批量导入账号 |
@@ -1208,11 +1208,11 @@ curl -X POST -H "X-API-Key: your-api-key" -H "Content-Type: application/json" \
 | `last_refresh_error` | 最近刷新错误 |
 | `tags` | 标签列表 |
 
-### GET `/api/accounts/search`
+### GET / POST `/api/accounts/search`
 
-搜索账号。
+搜索账号。参数较多或搜索词较长（例如一次粘贴上百行邮箱）时请使用 `POST`，以避免 GET URL 超过服务器请求行长度限制；前端页面默认使用 `POST`，`GET` 保留用于兼容旧客户端（如浏览器扩展）。
 
-#### 查询参数
+#### 查询参数（GET） / 请求体字段（POST）
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -1222,9 +1222,21 @@ curl -X POST -H "X-API-Key: your-api-key" -H "Content-Type: application/json" \
 | `sort_by` | string | 否 | 排序字段，支持 `created_at`、`email`、`sort_order` |
 | `sort_order` | string | 否 | 排序方向，`asc` 或 `desc`，默认 `desc` |
 | `group_id` | int | 否 | 仅搜索指定分组及所有子分组下的账号，不传则搜索全部分组 |
-| `tag_ids` | string | 否 | 逗号分隔的标签 ID，仅搜索包含任一标签的账号 |
-| `exclude_tag_ids` | string | 否 | 要排除的标签 ID；支持 `exclude_tag_ids=1,2` 或重复传递 `exclude_tag_ids=1&exclude_tag_ids=2`，返回账号不得拥有其中任一标签 |
+| `tag_ids` | string / int[] | 否 | 标签 ID，仅搜索包含任一标签的账号；GET 用逗号分隔字符串，POST 可直接传数组 |
+| `exclude_tag_ids` | string / int[] | 否 | 要排除的标签 ID；GET 支持 `exclude_tag_ids=1,2` 或重复传递 `exclude_tag_ids=1&exclude_tag_ids=2`，POST 传数组；返回账号不得拥有其中任一标签 |
 | `include_untagged` | bool | 否 | 与 `tag_ids` 配合使用，是否包含未打标签账号 |
+
+POST 请求体必须为 JSON 对象，示例：
+
+```json
+{
+  "q": "LynxAisling8842@outlook.com----token---pass\nADJIDIIiicijijccd@outlook.com----token---pass",
+  "limit": 200,
+  "offset": 0,
+  "tag_ids": [1, 2],
+  "exclude_tag_ids": [3]
+}
+```
 
 同时传入 `tag_ids` 与 `exclude_tag_ids` 时，账号需拥有 `tag_ids` 中至少一个标签，且不拥有 `exclude_tag_ids` 中任一标签。`include_untagged` 会先与包含标签条件取并集，再执行排除条件。
 

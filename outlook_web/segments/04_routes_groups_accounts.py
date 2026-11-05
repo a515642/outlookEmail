@@ -759,23 +759,38 @@ def api_generate_export_verify_token():
 
 # ==================== 邮箱账号 API ====================
 
-def get_account_list_request_args() -> Dict[str, Any]:
-    limit_arg = request.args.get('limit')
-    limit, offset = normalize_account_pagination(limit_arg, request.args.get('offset', 0))
-    sort_by, sort_order = normalize_account_sort(
-        request.args.get('sort_by', 'created_at'),
-        request.args.get('sort_order', 'desc')
-    )
-    include_untagged = str(request.args.get('include_untagged', '')).strip().lower() in {'1', 'true', 'yes'}
+def get_account_list_request_args(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """读取账号列表的公共查询参数。
+
+    overrides 用于 POST 请求（JSON 请求体），未传入时保持原有 GET 行为。
+    """
+    if overrides is None:
+        limit_arg = request.args.get('limit')
+        offset_arg = request.args.get('offset', 0)
+        sort_by_arg = request.args.get('sort_by', 'created_at')
+        sort_order_arg = request.args.get('sort_order', 'desc')
+        include_untagged_arg = request.args.get('include_untagged', '')
+        tag_ids_arg = request.args.get('tag_ids', '')
+        exclude_tag_ids_arg = ','.join(request.args.getlist('exclude_tag_ids'))
+    else:
+        limit_arg = overrides.get('limit')
+        offset_arg = overrides.get('offset', 0)
+        sort_by_arg = overrides.get('sort_by', 'created_at')
+        sort_order_arg = overrides.get('sort_order', 'desc')
+        include_untagged_arg = overrides.get('include_untagged', '')
+        tag_ids_arg = overrides.get('tag_ids', '')
+        exclude_tag_ids_arg = overrides.get('exclude_tag_ids', '')
+
+    limit, offset = normalize_account_pagination(limit_arg, offset_arg)
+    sort_by, sort_order = normalize_account_sort(sort_by_arg, sort_order_arg)
+    include_untagged = str(include_untagged_arg or '').strip().lower() in {'1', 'true', 'yes'}
     return {
         'limit': limit,
         'offset': offset,
         'sort_by': sort_by,
         'sort_order': sort_order,
-        'tag_ids': normalize_tag_filter_values(request.args.get('tag_ids', '')),
-        'exclude_tag_ids': normalize_tag_filter_values(
-            ','.join(request.args.getlist('exclude_tag_ids'))
-        ),
+        'tag_ids': normalize_tag_filter_values(tag_ids_arg),
+        'exclude_tag_ids': normalize_tag_filter_values(exclude_tag_ids_arg),
         'include_untagged': include_untagged,
     }
 
@@ -1879,13 +1894,30 @@ def api_batch_update_account_proxy():
 
 
 
-@app.route('/api/accounts/search', methods=['GET'])
+@app.route('/api/accounts/search', methods=['GET', 'POST'])
 @login_required
 def api_search_accounts():
-    """搜索账号"""
-    query = request.args.get('q', '').strip()
-    group_id = request.args.get('group_id', type=int)
-    list_args = get_account_list_request_args()
+    """搜索账号。
+
+    GET 兼容旧客户端（如浏览器扩展）；POST 支持较长的多行搜索词，
+    避免大量粘贴内容撑爆 URL 触发 414 / request line too large。
+    """
+    if request.method == 'POST':
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
+        query = str(payload.get('q', '') or '').strip()
+        raw_group_id = payload.get('group_id')
+        list_args = get_account_list_request_args(overrides=payload)
+    else:
+        query = request.args.get('q', '').strip()
+        raw_group_id = request.args.get('group_id')
+        list_args = get_account_list_request_args()
+
+    try:
+        group_id = int(raw_group_id) if raw_group_id not in (None, '') else None
+    except (TypeError, ValueError):
+        group_id = None
 
     if not query:
         return jsonify(build_account_list_response([], 0, list_args['limit'], list_args['offset']))

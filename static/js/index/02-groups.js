@@ -1243,6 +1243,27 @@
             return params;
         }
 
+        function buildAccountSearchPayload(query, offset) {
+            const filters = getAccountTagFilterParams();
+            const payload = {
+                q: query,
+                offset: offset,
+                limit: getAccountPageSize(),
+                sort_by: currentSortBy || 'created_at',
+                sort_order: currentSortOrder || 'desc',
+            };
+            if (filters.tagIds.length) {
+                payload.tag_ids = filters.tagIds;
+            }
+            if (filters.excludeTagIds.length) {
+                payload.exclude_tag_ids = filters.excludeTagIds;
+            }
+            if (getAccountSearchScope() === 'group' && currentGroupId) {
+                payload.group_id = currentGroupId;
+            }
+            return payload;
+        }
+
         function updateAccountPaginationState(mode, key, data, loadedCount, loading = false) {
             accountPaginationState = {
                 mode,
@@ -2061,17 +2082,19 @@
                 container.innerHTML = '<div class="loading loading-small"><div class="loading-spinner"></div></div>';
             }
 
-            const params = appendAccountListParams(new URLSearchParams({
-                q: query,
-                offset: String(offset)
-            }));
-            if (getAccountSearchScope() === 'group' && currentGroupId) {
-                params.set('group_id', String(currentGroupId));
-            }
+            // 使用 POST 提交搜索条件：多行粘贴的搜索词可能很长，GET 会触发
+            // 服务器/代理的 URL 长度限制（request line too large）。
+            const searchPayload = buildAccountSearchPayload(query, offset);
             const requestId = ++accountListRequestSeq;
 
             try {
-                const response = await fetch(`/api/accounts/search?${params.toString()}`);
+                const response = await fetch('/api/accounts/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(searchPayload)
+                });
                 const data = await response.json();
                 if (requestId !== accountListRequestSeq) {
                     return;

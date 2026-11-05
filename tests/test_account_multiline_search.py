@@ -65,6 +65,13 @@ class AccountMultilineSearchTests(unittest.TestCase):
         self.assertTrue(body['success'])
         return body
 
+    def _search_post(self, payload):
+        response = self.client.post('/api/accounts/search', json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertTrue(body['success'])
+        return body
+
     def _emails(self, query):
         return sorted(account['email'] for account in self._search(query)['accounts'])
 
@@ -112,6 +119,75 @@ class AccountMultilineSearchTests(unittest.TestCase):
         }))
         self.assertEqual(response.status_code, 400)
         self.assertIn('200', response.get_json()['error'])
+
+    def test_post_accepts_long_export_list_without_url_limit(self):
+        targets = [f'bulk{index:03d}@example.com' for index in range(120)]
+        for email_addr in targets:
+            self._insert_account(email_addr)
+        self._insert_account('not-in-list@example.com')
+
+        query = '\n'.join(
+            f'{email_addr}----password-{index}----padding-padding-padding'
+            for index, email_addr in enumerate(targets)
+        )
+        self.assertGreater(len(query), 4094)  # 超过服务器默认请求行上限，GET 会失败。
+
+        body = self._search_post({'q': query, 'limit': 500, 'offset': 0})
+        self.assertEqual(sorted(account['email'] for account in body['accounts']), targets)
+        self.assertEqual(body['total'], len(targets))
+
+    def test_post_supports_pagination_and_group_scope(self):
+        self._insert_account('group-one@example.com')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO accounts (email, group_id, account_type, provider)
+                VALUES (?, 2, 'outlook', 'outlook')
+                ''',
+                ('group-two@example.com',),
+            )
+            db.commit()
+
+        all_body = self._search_post({'q': 'group-', 'limit': 50})
+        self.assertEqual(
+            sorted(account['email'] for account in all_body['accounts']),
+            ['group-one@example.com', 'group-two@example.com'],
+        )
+
+        group_body = self._search_post({'q': 'group-', 'limit': 50, 'group_id': 2})
+        self.assertEqual(
+            [account['email'] for account in group_body['accounts']],
+            ['group-two@example.com'],
+        )
+
+        empty_body = self._search_post({'q': '', 'limit': 50})
+        self.assertEqual(empty_body['accounts'], [])
+        self.assertEqual(empty_body['total'], 0)
+
+    def test_post_rejects_non_json_body(self):
+        response = self.client.post(
+            '/api/accounts/search',
+            data='q=foo',
+            content_type='text/plain',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_post_limits_terms_same_as_get(self):
+        response = self.client.post('/api/accounts/search', json={
+            'q': '\n'.join(f'user{index}@example.com' for index in range(201)),
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('200', response.get_json()['error'])
+
+    def test_frontend_searches_with_post_json_body(self):
+        source = (ROOT_DIR / 'static' / 'js' / 'index' / '02-groups.js').read_text(encoding='utf-8')
+        self.assertIn("fetch('/api/accounts/search'", source)
+        self.assertIn("method: 'POST'", source)
+        self.assertIn("body: JSON.stringify(searchPayload)", source)
+        # 不允许回退到把搜索词拼进 URL 的 GET 写法。
+        self.assertNotIn('/api/accounts/search?${', source)
 
 
 if __name__ == '__main__':
