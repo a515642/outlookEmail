@@ -283,12 +283,16 @@
             populateTimeZoneOptions(getAppTimeZone());
             await loadSettings();
             await loadSkinSettings();
+            await loadApiKeyList();
             scheduleSettingsSidebarSync();
         }
 
         // 隐藏设置模态框
         function hideSettingsModal() {
             hideModal('settingsModal');
+            hideApiKeyEditModal();
+            hideApiKeySecretModal();
+            hideApiKeyAuditModal();
             // 清空密码输入框
             const passwordInput = document.getElementById('settingsPassword');
             if (passwordInput) {

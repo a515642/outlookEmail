@@ -1,0 +1,245 @@
+        /* ==================== API Key 管理 ==================== */
+        .api-keys-toolbar {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .api-keys-toolbar__hint {
+            flex: 1 1 320px;
+            color: var(--skin-text-muted);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .api-keys-toolbar__actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .api-keys-table-wrap,
+        .api-key-audit-table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid var(--skin-border);
+            border-radius: 10px;
+        }
+
+        .api-keys-table,
+        .api-key-audit-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .api-keys-table th,
+        .api-key-audit-table th {
+            text-align: left;
+            padding: 10px 12px;
+            background: var(--skin-surface-soft);
+            color: var(--skin-text-soft);
+            font-weight: 600;
+            white-space: nowrap;
+            border-bottom: 1px solid var(--skin-border);
+        }
+
+        .api-keys-table td,
+        .api-key-audit-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--skin-border);
+            vertical-align: top;
+        }
+
+        .api-keys-table tbody tr:last-child td,
+        .api-key-audit-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .api-keys-empty {
+            text-align: center;
+            color: var(--skin-text-muted);
+            padding: 28px 12px !important;
+        }
+
+        .api-key-muted {
+            color: var(--skin-text-muted);
+            font-size: 12px;
+        }
+
+        .api-key-prefix {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: var(--skin-surface-soft);
+            border: 1px solid var(--skin-border);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .api-key-scope-badge,
+        .api-key-group-badge {
+            display: inline-block;
+            padding: 2px 7px;
+            margin: 1px 2px 1px 0;
+            border-radius: 999px;
+            font-size: 12px;
+            line-height: 1.5;
+            background: var(--skin-accent-soft);
+            color: var(--skin-accent);
+            border: 1px solid var(--skin-accent-border);
+            white-space: nowrap;
+        }
+
+        .api-key-group-badge {
+            background: var(--skin-surface-soft);
+            color: var(--skin-text-muted);
+            border-color: var(--skin-border);
+        }
+
+        .api-key-group-cell {
+            max-width: 220px;
+        }
+
+        .api-key-status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            line-height: 1.5;
+            background: var(--skin-surface-soft);
+            color: var(--skin-text-muted);
+            border: 1px solid var(--skin-border);
+            white-space: nowrap;
+        }
+
+        .api-key-status.is-active,
+        .api-key-status.is-ok {
+            background: rgba(16, 185, 129, 0.12);
+            color: #059669;
+            border-color: rgba(16, 185, 129, 0.35);
+        }
+
+        .api-key-status.is-expired,
+        .api-key-status.is-warn {
+            background: rgba(245, 158, 11, 0.12);
+            color: #d97706;
+            border-color: rgba(245, 158, 11, 0.35);
+        }
+
+        .api-key-status.is-revoked,
+        .api-key-status.is-error {
+            background: rgba(239, 68, 68, 0.12);
+            color: #dc2626;
+            border-color: rgba(239, 68, 68, 0.35);
+        }
+
+        .api-key-row-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            min-width: 150px;
+        }
+
+        .api-key-modal-content {
+            max-width: 560px;
+            width: min(560px, 94vw);
+        }
+
+        .api-key-audit-modal-content {
+            max-width: 900px;
+            width: min(900px, 96vw);
+        }
+
+        .api-key-form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .api-key-checkbox-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px 12px;
+            border: 1px solid var(--skin-border);
+            border-radius: 8px;
+            background: var(--skin-surface-soft);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .api-key-checkbox-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 13px;
+            line-height: 1.6;
+            cursor: pointer;
+        }
+
+        .api-key-checkbox-item input {
+            margin-top: 3px;
+            flex: 0 0 auto;
+        }
+
+        .api-key-group-list {
+            max-height: 220px;
+        }
+
+        .api-key-ip-input {
+            resize: vertical;
+            min-height: 72px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .form-error {
+            color: var(--skin-danger);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .api-key-secret-warning {
+            padding: 10px 12px;
+            margin-bottom: 14px;
+            border-radius: 8px;
+            background: rgba(245, 158, 11, 0.12);
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            color: #b45309;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .api-key-secret-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .api-key-secret-value {
+            flex: 1;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .api-key-audit-path {
+            max-width: 320px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 700px) {
+            .api-key-form-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .api-key-secret-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }

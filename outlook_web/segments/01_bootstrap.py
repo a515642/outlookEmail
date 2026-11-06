@@ -120,13 +120,14 @@ LOG_LEVEL = configure_app_logging(app)
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# CORS 支持：仅对外部 API (/api/external/*) 启用跨域访问
+# CORS 支持：仅对外部 API (/api/external/*) 与 v1 API (/api/v1/*) 启用跨域访问
 @app.after_request
 def add_cors_headers_for_external_api(response):
-    if request.path.startswith('/api/external/'):
+    if request.path.startswith('/api/external/') or request.path.startswith('/api/v1/'):
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-API-Key, Authorization'
+        response.headers['Access-Control-Expose-Headers'] = 'Retry-After'
         response.headers['Access-Control-Max-Age'] = '86400'
     return response
 
@@ -746,6 +747,7 @@ INDEX_CSS_FILES = (
     'css/index/forwarding/tokens.css',
     'css/index/forwarding/base.css',
     'css/index/10-forwarding.css',
+    'css/index/11-api-keys.css',
 )
 INDEX_JS_FILES = (
     'js/index/01-core.js',
@@ -764,6 +766,7 @@ INDEX_JS_FILES = (
     'js/index/14-icloud.js',
     'js/index/15-forwarding.js',
     'js/index/16-group-shares.js',
+    'js/index/17-api-keys.js',
 )
 
 # GPTMail API 配置
@@ -1692,6 +1695,89 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # ==================== 对外 API Key（/api/v1） ====================
+    # 多 Key 权限模型：密钥仅存 SHA-256 哈希，明文只在创建/轮换时返回一次。
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            key_prefix TEXT NOT NULL,
+            key_last4 TEXT NOT NULL DEFAULT '',
+            key_hash TEXT NOT NULL UNIQUE,
+            scopes TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'revoked')),
+            expires_at TIMESTAMP,
+            rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+            ip_allowlist TEXT NOT NULL DEFAULT '',
+            last_used_at TIMESTAMP,
+            last_used_ip TEXT NOT NULL DEFAULT '',
+            request_count INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            revoked_at TIMESTAMP,
+            rotated_at TIMESTAMP
+        )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_api_keys_status ON api_keys(status)')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS api_key_groups (
+            api_key_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            PRIMARY KEY (api_key_id, group_id),
+            FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_api_key_groups_group ON api_key_groups(group_id)')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS api_key_claims (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            api_key_id INTEGER NOT NULL,
+            account_id INTEGER,
+            normalized_email TEXT NOT NULL,
+            email_snapshot TEXT NOT NULL DEFAULT '',
+            claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            released_at TIMESTAMP,
+            release_reason TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE CASCADE,
+            FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE SET NULL
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_api_key_claims_key_account
+        ON api_key_claims(api_key_id, account_id, claimed_at)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_api_key_claims_key_email
+        ON api_key_claims(api_key_id, normalized_email, released_at)
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_api_key_claims_claimed_at ON api_key_claims(claimed_at)')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS api_key_audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            api_key_id INTEGER,
+            key_prefix TEXT NOT NULL DEFAULT '',
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            status_code INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NOT NULL DEFAULT '',
+            ip TEXT NOT NULL DEFAULT '',
+            user_agent TEXT NOT NULL DEFAULT '',
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_api_key_audit_key_created
+        ON api_key_audit_logs(api_key_id, created_at DESC)
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_api_key_audit_created ON api_key_audit_logs(created_at)')
 
     # 创建标签表
     cursor.execute('''

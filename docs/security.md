@@ -178,6 +178,23 @@ cp data/outlook_accounts.db data/outlook_accounts.db.backup
 0 2 * * * cp /path/to/data/outlook_accounts.db /path/to/backup/outlook_accounts.db.$(date +\%Y\%m\%d)
 ```
 
+## 11. 多 API Key 管理（/api/v1）
+
+设置页「API Key 管理」可以创建多个独立 Key 分发给不同使用者，与旧版全局 API Key、`/api/external/*` 完全隔离。
+
+安全要点：
+
+1. **只存哈希**：数据库 `api_keys.key_hash` 仅保存 SHA-256 哈希，不保存明文；明文只在创建或轮换的响应中出现一次。
+2. **一次性展示**：前端不会把密钥写入 `localStorage` / `sessionStorage` / Cookie；关闭弹窗即从页面清除。请立即在调用方安全保存。
+3. **最小权限**：按需勾选 `mail:read`、`account:claim`，不要默认全开。
+4. **分组隔离**：Key 只能访问绑定分组及其子分组内的邮箱；绑定为空时全部拒绝。
+5. **IP 白名单**：填写后仅白名单内 IP/CIDR 可调用；**留空表示不启用**。若前面有反向代理，请确认 `ProxyFix` 配置正确，避免白名单被伪造的转发头绕过。
+6. **限速**：`rate_limit_per_minute` 为进程内滑动窗口实现，重启会清零；多 worker 部署时每个进程各自计数。当前默认单 worker 部署可满足基本需求，需要严格全局限速时请在前置网关实现。
+7. **过期与撤销**：为分发 Key 设置过期时间；泄露时立即撤销（不可恢复）或轮换。撤销、轮换会立即生效。
+8. **调用审计**：每个 Key 记录最近 2000 条请求（方法、路径、状态码、错误码、IP、UA、耗时），定期检查异常 IP 与 429/401 峰值。
+9. **传输安全**：密钥通过 Header 明文传输，生产环境务必启用 HTTPS，避免在 URL 查询参数中传 Key（服务端也不接受）。
+10. **领取不泄露凭据**：`/api/v1/accounts/claim` 只返回邮箱地址和分组名，不返回密码、Client ID 或 Refresh Token。
+
 ## 安全最佳实践
 
 1. **固定 SECRET_KEY**：服务器部署必须显式设置，桌面版需保留自动生成的密钥文件

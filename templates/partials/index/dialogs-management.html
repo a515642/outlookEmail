@@ -59,6 +59,12 @@
                                         <span>自部署实例地址与私有域名 API Key</span>
                                     </button>
                                 </li>
+                                <li>
+                                    <button type="button" class="settings-sidebar-link" data-target="settingsApiKeysSection" onclick="scrollSettingsSection('settingsApiKeysSection', this)">
+                                        <strong>API Key 管理</strong>
+                                        <span>多 Key 分发、权限、分组范围与调用审计</span>
+                                    </button>
+                                </li>
                             </ul>
                         </div>
                     </aside>
@@ -535,12 +541,167 @@
                         </div>
                     </div>
                 </section>
+
+                <section class="settings-section" id="settingsApiKeysSection">
+                    <div class="settings-section-head">
+                        <span class="settings-section-kicker">API Access</span>
+                        <h4>API Key 管理</h4>
+                        <p>为不同使用者分发独立 Key，按分组隔离邮箱数据，并限制权限、速率与来源 IP。</p>
+                    </div>
+                    <div class="settings-panel">
+                        <div class="api-keys-toolbar">
+                            <div class="api-keys-toolbar__hint">
+                                新 Key 仅能调用 <code>/api/v1/*</code>，与上方旧版全局 API Key 完全隔离。密钥只在创建/轮换时显示一次。
+                            </div>
+                            <div class="api-keys-toolbar__actions">
+                                <button class="btn btn-secondary" type="button" onclick="loadApiKeyList()">刷新</button>
+                                <button class="btn btn-primary" type="button" onclick="openCreateApiKeyModal()">新建 API Key</button>
+                            </div>
+                        </div>
+                        <div class="api-keys-table-wrap">
+                            <table class="api-keys-table">
+                                <thead>
+                                    <tr>
+                                        <th>名称</th>
+                                        <th>Key</th>
+                                        <th>权限</th>
+                                        <th>作用分组</th>
+                                        <th>过期时间</th>
+                                        <th>限速</th>
+                                        <th>最近调用</th>
+                                        <th>状态</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="apiKeyTableBody">
+                                    <tr>
+                                        <td colspan="9" class="api-keys-empty">正在加载...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideSettingsModal()">取消</button>
                 <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Key 新建/编辑模态框 -->
+    <div class="modal" id="apiKeyEditModal" onmousedown="if(event.target === this) hideApiKeyEditModal()">
+        <div class="modal-content api-key-modal-content">
+            <div class="modal-header">
+                <h3 id="apiKeyEditTitle">新建 API Key</h3>
+                <button class="modal-close" onclick="hideApiKeyEditModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label" for="apiKeyName">名称</label>
+                    <input type="text" class="form-input" id="apiKeyName" maxlength="100" placeholder="例如：客户 A / 爬虫任务">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">权限范围</label>
+                    <div class="api-key-checkbox-list">
+                        <label class="api-key-checkbox-item">
+                            <input type="checkbox" id="apiKeyScopeMailRead" value="mail:read">
+                            <span><strong>mail:read</strong> 读取邮件列表与正文</span>
+                        </label>
+                        <label class="api-key-checkbox-item">
+                            <input type="checkbox" id="apiKeyScopeAccountClaim" value="account:claim">
+                            <span><strong>account:claim</strong> 从邮箱池领取邮箱地址（不含凭据）与释放</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">作用分组</label>
+                    <div class="api-key-checkbox-list api-key-group-list" id="apiKeyGroupCheckboxList"></div>
+                    <div class="form-hint">授权范围包含所选分组及其全部子分组；未选择任何分组时该 Key 无法访问任何邮箱。</div>
+                </div>
+                <div class="api-key-form-grid">
+                    <div class="form-group">
+                        <label class="form-label" for="apiKeyExpiresAt">过期时间</label>
+                        <input type="datetime-local" class="form-input" id="apiKeyExpiresAt">
+                        <div class="form-hint">留空表示永不过期（按 UTC 保存）。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="apiKeyRateLimit">每分钟限速</label>
+                        <input type="number" class="form-input" id="apiKeyRateLimit" min="0" max="100000" value="0">
+                        <div class="form-hint">0 表示不限速。</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="apiKeyIpAllowlist">IP 白名单</label>
+                    <textarea class="form-input api-key-ip-input" id="apiKeyIpAllowlist" rows="3" placeholder="例如：203.0.113.10, 198.51.100.0/24"></textarea>
+                    <div class="form-hint">支持 IP 与 CIDR，逗号或换行分隔；留空表示不启用，任意 IP 均可访问。</div>
+                </div>
+                <div class="form-error" id="apiKeyEditError" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" type="button" onclick="hideApiKeyEditModal()">取消</button>
+                <button class="btn btn-primary" type="button" id="apiKeyEditSubmitBtn" onclick="submitApiKeyForm()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Key 一次性密钥展示模态框 -->
+    <div class="modal" id="apiKeySecretModal" onmousedown="if(event.target === this) hideApiKeySecretModal()">
+        <div class="modal-content api-key-modal-content">
+            <div class="modal-header">
+                <h3>API Key 已生成</h3>
+                <button class="modal-close" onclick="hideApiKeySecretModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="api-key-secret-warning">
+                    该密钥<strong>仅显示一次</strong>。关闭后无法再次查看，只能轮换生成新的密钥。
+                </div>
+                <div class="api-key-secret-row">
+                    <input type="text" class="form-input api-key-secret-value" id="apiKeySecretValue" readonly spellcheck="false">
+                    <button class="btn btn-secondary" type="button" onclick="copyApiKeySecret()">复制</button>
+                </div>
+                <div class="form-hint">调用时使用 Header <code>X-API-Key: &lt;密钥&gt;</code> 或 <code>Authorization: Bearer &lt;密钥&gt;</code>。</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" type="button" onclick="hideApiKeySecretModal()">我已保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Key 调用记录模态框 -->
+    <div class="modal" id="apiKeyAuditModal" onmousedown="if(event.target === this) hideApiKeyAuditModal()">
+        <div class="modal-content api-key-audit-modal-content">
+            <div class="modal-header">
+                <h3 id="apiKeyAuditTitle">调用记录</h3>
+                <button class="modal-close" onclick="hideApiKeyAuditModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="api-key-audit-table-wrap">
+                    <table class="api-key-audit-table">
+                        <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>方法</th>
+                                <th>路径</th>
+                                <th>状态</th>
+                                <th>错误码</th>
+                                <th>IP</th>
+                                <th>耗时</th>
+                            </tr>
+                        </thead>
+                        <tbody id="apiKeyAuditTableBody">
+                            <tr>
+                                <td colspan="7" class="api-keys-empty">正在加载...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" type="button" onclick="hideApiKeyAuditModal()">关闭</button>
             </div>
         </div>
     </div>

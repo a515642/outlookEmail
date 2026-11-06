@@ -35,6 +35,8 @@ SEGMENT_FILES = (
     "12_routes_icloud.py",
     "13_routes_forwarding.py",
     "14_routes_group_shares.py",
+    "15_api_keys.py",
+    "16_routes_api_v1.py",
 )
 
 SEGMENTS_DIR = Path(__file__).resolve().parent / "outlook_web" / "segments"

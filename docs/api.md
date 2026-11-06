@@ -180,6 +180,22 @@
 | POST | `/api/skins/<skin_id>/git/update` | Session + CSRF | JSON | 更新 Git 来源皮肤 |
 | DELETE | `/api/skins/<skin_id>` | Session + CSRF | JSON | 删除未启用的自定义皮肤 |
 
+### v1 API（多 API Key）
+
+| 方法 | 路径 | 鉴权 | 返回类型 | 说明 |
+| --- | --- | --- | --- | --- |
+| POST | `/api/v1/accounts/claim` | v1 API Key（`account:claim`） | JSON | 从授权分组内领取一个邮箱地址 |
+| POST | `/api/v1/accounts/release` | v1 API Key（`account:claim`） | JSON | 显式释放当前 Key 领取的邮箱 |
+| GET | `/api/v1/mail/folders` | v1 API Key（`mail:read`） | JSON | 获取可读取的逻辑文件夹 |
+| GET | `/api/v1/mail/messages` | v1 API Key（`mail:read`） | JSON | 获取邮件列表 |
+| GET | `/api/v1/mail/messages/<message_id>` | v1 API Key（`mail:read`） | JSON | 获取邮件正文 |
+| GET | `/api/settings/api-keys` | Session | JSON | 列出全部 API Key（不含密钥） |
+| POST | `/api/settings/api-keys` | Session + CSRF | JSON | 创建 API Key，响应仅此一次返回 `secret` |
+| PUT | `/api/settings/api-keys/<key_id>` | Session + CSRF | JSON | 修改名称、权限、分组、过期、限速、IP 白名单 |
+| POST | `/api/settings/api-keys/<key_id>/rotate` | Session + CSRF | JSON | 轮换密钥，旧密钥立即失效 |
+| POST | `/api/settings/api-keys/<key_id>/revoke` | Session + CSRF | JSON | 撤销 API Key（不可恢复） |
+| GET | `/api/settings/api-keys/<key_id>/audit` | Session | JSON | 查看该 Key 最近的调用记录 |
+
 ## 认证
 
 ### 对外 API
@@ -1110,6 +1126,242 @@ curl -X POST -H "X-API-Key: your-api-key" -H "Content-Type: application/json" \
 ```
 
 成功响应包含 `deleted` / `not_found` 计数。
+
+## v1 API（多 API Key）
+
+`/api/v1/*` 是**独立的新对外接口**，使用设置页「API Key 管理」中创建的多个 Key。
+
+> 与旧版 `/api/external/*` 完全隔离：
+> - 旧全局 Key（`settings.external_api_key`）只能调用 `/api/external/*`，不能调用 `/api/v1/*`；
+> - 新 Key（`okv1_` 前缀）只能调用 `/api/v1/*`，不能调用 `/api/external/*`。
+
+### 认证
+
+支持两种 Header，**不接受查询参数传 Key**：
+
+```http
+X-API-Key: okv1_xxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+```http
+Authorization: Bearer okv1_xxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+服务端只保存密钥的 SHA-256 哈希；明文只在创建或轮换时返回一次。丢失后只能轮换。
+
+### 权限范围（scope）
+
+| scope | 能力 |
+| --- | --- |
+| `mail:read` | 读取授权分组内邮箱的邮件列表与正文 |
+| `account:claim` | 从授权分组内领取邮箱地址、显式释放 |
+
+未授予的 scope 调用对应接口会返回 HTTP 403 `scope_denied`。
+
+### 分组隔离
+
+每个 Key 必须绑定至少一个分组，授权范围**包含所选分组的全部子分组**。分组结构修改后实时生效。
+
+- 邮箱地址（含别名、plus 地址）在解析后会再做归属校验，解析到范围外账号返回 403 `group_not_allowed`。
+- Key 的分组绑定为空时全部拒绝（fail-closed）。
+
+### 领取语义
+
+- `POST /api/v1/accounts/claim` 只在授权分组内随机选一个 `active` 账号。
+- 同一 Key 领取过的邮箱在 **10 分钟内不会再次发给该 Key**；10 分钟后自动回归可领取池。
+- 调用释放接口可立即释放，使该邮箱马上可被同一 Key 再次领取。
+- 不同 Key 之间不做互斥：A Key 正在使用的邮箱，B Key 仍可能领取到。
+- 领取只返回**邮箱地址与分组信息**，绝不返回密码、Client ID、Refresh Token 或别名。
+
+### 限速、IP 白名单与过期
+
+- `rate_limit_per_minute`：0 表示不限；超过限制返回 HTTP 429 `rate_limited`，并带 `Retry-After` 响应头。
+- `ip_allowlist`：逗号或换行分隔的 IP / CIDR；**留空表示不启用**，任意 IP 可用。
+- `expires_at`：UTC 时间，过期后该 Key 立即不可用（401 `key_expired`）。
+- 撤销后立即不可用（401 `key_revoked`），且不可恢复。
+
+### 错误响应
+
+```json
+{
+  "success": false,
+  "error_code": "invalid_api_key",
+  "error": "API Key 无效"
+}
+```
+
+| HTTP | error_code | 说明 |
+| --- | --- | --- |
+| 401 | `missing_api_key` | 未提供 Key |
+| 401 | `invalid_api_key` | Key 不存在或哈希不匹配 |
+| 401 | `key_revoked` | Key 已撤销 |
+| 401 | `key_expired` | Key 已过期 |
+| 403 | `ip_not_allowed` | 来源 IP 不在白名单 |
+| 403 | `scope_denied` | Key 缺少对应 scope |
+| 403 | `group_not_allowed` | 邮箱不在 Key 的授权分组内 |
+| 429 | `rate_limited` | 超过每分钟限速 |
+| 404 | `account_not_found` | 邮箱不存在 |
+| 404 | `no_account_available` | 授权分组内暂无可领取邮箱 |
+| 404 | `claim_not_found` | 当前 Key 对该邮箱没有有效领取记录 |
+| 502 | `mail_fetch_failed` | 上游邮件服务失败（不回传上游细节） |
+
+### POST `/api/v1/accounts/claim`
+
+无请求体。成功响应：
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": "user@example.com",
+    "group_id": 3,
+    "group_name": "客户 A"
+  }
+}
+```
+
+### POST `/api/v1/accounts/release`
+
+```json
+{ "email": "user@example.com" }
+```
+
+```json
+{
+  "success": true,
+  "data": { "email": "user@example.com", "released": true }
+}
+```
+
+### GET `/api/v1/mail/folders`
+
+参数：`email`（必填）。
+
+```json
+{
+  "success": true,
+  "data": {
+    "folders": [
+      { "name": "inbox", "label": "收件箱" },
+      { "name": "junkemail", "label": "垃圾邮件" },
+      { "name": "deleteditems", "label": "已删除" }
+    ]
+  }
+}
+```
+
+### GET `/api/v1/mail/messages`
+
+| 参数 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `email` | 是 | - | 邮箱地址 |
+| `folder` | 否 | `inbox` | `inbox` / `junkemail` / `deleteditems` |
+| `skip` | 否 | 0 | 跳过条数 |
+| `top` | 否 | 20 | 返回条数，最大 50 |
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": "user@example.com",
+    "folder": "inbox",
+    "skip": 0,
+    "top": 20,
+    "emails": [
+      {
+        "id": "AAMk...",
+        "subject": "标题",
+        "from": "sender@example.com",
+        "to": "user@example.com",
+        "date": "2026-01-01T00:00:00Z",
+        "is_read": true,
+        "has_attachments": false,
+        "body_preview": "预览文本",
+        "folder": "inbox",
+        "id_mode": "uid"
+      }
+    ],
+    "has_more": false
+  }
+}
+```
+
+### GET `/api/v1/mail/messages/<message_id>`
+
+| 参数 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `email` | 是 | - | 邮箱地址 |
+| `folder` | 否 | `inbox` | 同上 |
+| `method` | 否 | `graph` | `graph` 或 `imap` |
+| `id_mode` | 否 | 空 | `uid` 或 `sequence`（IMAP 时使用） |
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": "user@example.com",
+    "message_id": "AAMk...",
+    "subject": "标题",
+    "from": "sender@example.com",
+    "to": "user@example.com",
+    "date": "2026-01-01T00:00:00Z",
+    "body": "<p>正文 HTML</p>",
+    "body_type": "html",
+    "has_attachments": false
+  }
+}
+```
+
+不返回附件内容、原始邮件头或任何账号凭据；正文可能是 HTML，客户端需自行消毒。
+
+### 管理接口
+
+管理接口使用 Web Session + CSRF，仅登录后可调用。
+
+#### GET `/api/settings/api-keys`
+
+返回 `keys` 数组，字段包括 `id`、`name`、`key_prefix`、`key_last4`、`scopes`、`group_ids`、`groups`、`status`（`active` / `expired` / `revoked`）、`expires_at`、`rate_limit_per_minute`、`ip_allowlist`、`last_used_at`、`last_used_ip`、`request_count`、`created_at`、`rotated_at`、`revoked_at`。**永不返回密钥或哈希。**
+
+#### POST `/api/settings/api-keys`
+
+```json
+{
+  "name": "客户 A",
+  "scopes": ["mail:read", "account:claim"],
+  "group_ids": [3],
+  "expires_at": "2026-12-31T00:00:00Z",
+  "rate_limit_per_minute": 60,
+  "ip_allowlist": "203.0.113.10, 198.51.100.0/24"
+}
+```
+
+`expires_at` 可为 `null`（永不过期）；`rate_limit_per_minute` 为 0 表示不限；`ip_allowlist` 为空字符串表示不启用。
+
+成功响应除 `key` 外额外返回一次 `secret`：
+
+```json
+{
+  "success": true,
+  "key": { "id": 1, "name": "客户 A", "key_prefix": "okv1_abc1234", "status": "active" },
+  "secret": "okv1_abcdefghijklmnopqrstuvwxyz0123456789"
+}
+```
+
+#### PUT `/api/settings/api-keys/<key_id>`
+
+请求体字段与创建相同（不含密钥），整体覆盖配置。
+
+#### POST `/api/settings/api-keys/<key_id>/rotate`
+
+轮换密钥，返回新的顶层 `secret`；旧密钥立即失效。已撤销的 Key 不能轮换。
+
+#### POST `/api/settings/api-keys/<key_id>/revoke`
+
+软撤销，保留历史与审计；重复调用返回成功。
+
+#### GET `/api/settings/api-keys/<key_id>/audit?limit=50`
+
+返回该 Key 最近的调用记录（最多 200 条），字段：`id`、`method`、`path`、`status_code`、`error_code`、`ip`、`user_agent`、`duration_ms`、`created_at`。每个 Key 最多保留最近 2000 条。
 
 ## 内部 API
 
