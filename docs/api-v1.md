@@ -247,6 +247,14 @@ POST /accounts/release      → 提前归还（可选）
 
 `has_more` 为 `true` 时可增大 `skip` 继续翻页。
 
+列表按收件时间**从新到旧**返回，因此：
+
+- 只取最新一封：`top=1`
+- 取最新 5 封：`top=5`（不超过 50）
+- 读取更早的邮件：增大 `skip`，如 `skip=5&top=5`
+
+当前没有按日期区间或“仅未读”过滤的参数；如需按时间筛选，请用返回的 `date` 字段自行过滤。
+
 ### 5.3 GET `/api/v1/mail/messages/<message_id>`
 
 参数：
