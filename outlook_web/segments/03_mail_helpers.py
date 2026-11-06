@@ -389,6 +389,9 @@ def register_graph_token_scope_preference(client_id: str, refresh_token: str, sc
         return
     key = _graph_token_scope_cache_key(client_id, refresh_token)
     with _graph_token_scope_cache_lock:
+        # 配置变化后不再沿用旧 scope；重复读取自动账号仍保留成功项以加速拉信。
+        if _graph_token_scope_preferences.get(key, '') != normalized:
+            _graph_token_scope_last_success.pop(key, None)
         if normalized:
             _graph_token_scope_preferences[key] = normalized
             _trim_graph_token_scope_cache(_graph_token_scope_preferences)
@@ -569,7 +572,7 @@ def cache_access_token(token_kind: str, client_id: str, refresh_token: str,
 def request_graph_token_response(client_id: str, refresh_token: str, proxy_url: str = None,
                                  fallback_proxy_urls: Optional[List[str]] = None,
                                  include_original_scope_fallback: bool = False,
-                                 preferred_scope: Optional[str] = None):
+                                 preferred_scope: Optional[str] = None, *, required_scope: str = ''):
     """拉信优先显式 scope；刷新优先 .default，缺少 refresh_token 时尝试原始 scope。"""
     last_response = None
     successful_response = None
@@ -579,6 +582,15 @@ def request_graph_token_response(client_id: str, refresh_token: str, proxy_url: 
         if not scope_hint:
             scope_hint = get_preferred_graph_token_scope(client_id, refresh_token)
         candidates = prioritize_graph_token_scope_candidates(candidates, scope_hint)
+        if required_scope:
+            # 写操作不能使用缺少对应权限的只读缓存或回退项；.default 由已有授权决定权限。
+            compatible_scopes = {
+                required_scope, required_scope.rsplit('/', 1)[-1], GRAPH_DEFAULT_TOKEN_SCOPE, '.default',
+            }
+            candidates = [
+                (label, scope) for label, scope in candidates
+                if compatible_scopes.intersection(scope.split())
+            ]
     for index, (_label, scope) in enumerate(candidates):
         data = {
             "client_id": client_id,
@@ -682,7 +694,8 @@ def proxy_socket_context(proxy_url: str):
 
 
 def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url: str = None,
-                                  fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+                                  fallback_proxy_urls: Optional[List[str]] = None, *,
+                                  required_scope: str = '') -> Dict[str, Any]:
     """获取 Graph API access_token（包含错误详情）"""
     cached_token = get_cached_access_token('graph', client_id, refresh_token)
     if cached_token:
@@ -693,6 +706,7 @@ def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url:
             refresh_token,
             proxy_url,
             fallback_proxy_urls,
+            required_scope=required_scope,
         )
 
         if res.status_code != 200:
@@ -739,9 +753,12 @@ def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url:
 
 
 def get_access_token_graph(client_id: str, refresh_token: str, proxy_url: str = None,
-                           fallback_proxy_urls: Optional[List[str]] = None) -> Optional[str]:
+                           fallback_proxy_urls: Optional[List[str]] = None, *,
+                           required_scope: str = '') -> Optional[str]:
     """获取 Graph API access_token"""
-    result = get_access_token_graph_result(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+    result = get_access_token_graph_result(
+        client_id, refresh_token, proxy_url, fallback_proxy_urls, required_scope=required_scope,
+    )
     if result.get("success"):
         return result.get("access_token")
     return None
@@ -869,6 +886,7 @@ def send_graph_mail_result(client_id: str, refresh_token: str, recipients: Any, 
         refresh_token,
         proxy_url,
         fallback_proxy_urls,
+        required_scope='https://graph.microsoft.com/Mail.Send',
     )
     if not token_result.get('success'):
         token_error = token_result.get('error') or {}
@@ -1162,7 +1180,10 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
             'errors': ['message_ids 不能为空'],
         }
 
-    token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+    token_result = get_access_token_graph_result(
+        client_id, refresh_token, proxy_url, fallback_proxy_urls,
+        required_scope='https://graph.microsoft.com/Mail.ReadWrite',
+    )
     if not token_result.get('success'):
         return {
             'success': False,
