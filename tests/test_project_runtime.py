@@ -2745,8 +2745,8 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertNotIn('splitTerms.every', groups_js)
         self.assertIn('return Array.from(new Set(terms));', groups_js)
         self.assertIn("ACCOUNT_SEARCH_EXPORT_SEPARATOR = '----'", groups_js)
-        self.assertIn('ACCOUNT_SEARCH_MAX_TERMS = 200', groups_js)
-        self.assertIn('搜索关键词最多支持 200 个', groups_js)
+        self.assertIn('ACCOUNT_SEARCH_MAX_TERMS = 10000', groups_js)
+        self.assertIn('搜索关键词最多支持 ${ACCOUNT_SEARCH_MAX_TERMS} 个', groups_js)
 
     def test_save_settings_separates_saved_refresh_failure(self):
         settings_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '07-settings.js').read_text(encoding='utf-8')

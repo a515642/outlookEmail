@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -556,7 +557,9 @@ def build_account_tag_filter_clause(tag_ids: Any = None, include_untagged: bool 
     return '(' + ' AND '.join(clauses) + ')', params
 
 
-ACCOUNT_SEARCH_MAX_TERMS = 200
+ACCOUNT_SEARCH_MAX_TERMS = 10000
+# 超过该数量时改用 Python 端批量匹配，避免数千个 OR LIKE 拖慢查询。
+ACCOUNT_SEARCH_SQL_MAX_TERMS = 200
 ACCOUNT_SEARCH_EXPORT_SEPARATOR = '----'
 
 
@@ -796,6 +799,88 @@ def search_account_records(query: str, limit: Any = None, offset: Any = 0,
         {pagination_clause}
     ''', params).fetchall()
     return serialize_account_rows(rows, db)
+
+
+def build_account_search_matcher(terms: List[str]):
+    """为一组搜索词构建大小写不敏感的子串匹配器。"""
+    normalized_terms = [str(term or '').strip() for term in terms if str(term or '').strip()]
+    if not normalized_terms:
+        return None
+    try:
+        return re.compile('|'.join(re.escape(term) for term in normalized_terms), re.IGNORECASE)
+    except (re.error, OverflowError):
+        # 极端超长输入退回到逐个关键词判断，保证搜索仍可完成。
+        lowered_terms = [term.lower() for term in normalized_terms]
+
+        class _FallbackMatcher:
+            def search(self, haystack: str):
+                lowered = haystack.lower()
+                return next((term for term in lowered_terms if term in lowered), None)
+
+        return _FallbackMatcher()
+
+
+def search_account_records_large(query: str, limit: Any = None, offset: Any = 0,
+                                 sort_by: Any = 'created_at', sort_order: Any = 'desc',
+                                 tag_ids: Any = None, include_untagged: bool = False,
+                                 group_id: int = None, include_descendants: bool = True,
+                                 exclude_tag_ids: Any = None) -> tuple[List[Dict[str, Any]], int]:
+    """批量搜索（数千个关键词）。
+
+    先用 SQL 完成分组/标签过滤和排序，再在 Python 中做一次子串匹配，
+    避免生成数千个 ``OR LIKE`` 条件导致查询极慢或超出表达式深度。
+    只对当前页的账号做序列化和解密。
+    """
+    terms = normalize_account_search_terms(query)
+    if not terms:
+        return [], 0
+
+    database = get_db()
+    normalized_limit, normalized_offset = normalize_account_pagination(limit, offset)
+    where_clause, params = build_account_where_clause(
+        group_id=group_id,
+        tag_ids=tag_ids,
+        include_untagged=include_untagged,
+        include_descendants=include_descendants,
+        exclude_tag_ids=exclude_tag_ids,
+    )
+    order_clause = build_account_order_clause(sort_by, sort_order)
+    rows = database.execute(f'''
+        SELECT a.*, g.name as group_name, g.color as group_color
+        FROM accounts a
+        LEFT JOIN groups g ON a.group_id = g.id
+        {where_clause}
+        {order_clause}
+    ''', params).fetchall()
+    if not rows:
+        return [], 0
+
+    account_ids = [int(row['id']) for row in rows]
+    aliases_by_account = get_account_aliases_map(account_ids, database)
+    tags_by_account = get_account_tags_map(account_ids, database)
+    matcher = build_account_search_matcher(terms)
+    if matcher is None:
+        return [], 0
+
+    matched_rows = []
+    for row in rows:
+        account_id = int(row['id'])
+        haystack_parts = [str(row['email'] or ''), str(row['remark'] or '')]
+        haystack_parts.extend(
+            str(tag.get('name') or '')
+            for tag in tags_by_account.get(account_id, [])
+            if isinstance(tag, dict)
+        )
+        haystack_parts.extend(aliases_by_account.get(account_id, []))
+        if matcher.search('\n'.join(haystack_parts)):
+            matched_rows.append(row)
+
+    total = len(matched_rows)
+    if normalized_limit is None:
+        page_rows = matched_rows[normalized_offset:]
+    else:
+        page_rows = matched_rows[normalized_offset:normalized_offset + normalized_limit]
+    return serialize_account_rows(page_rows, database), total
 
 
 def normalize_account_sort_order(sort_order: Any, default: int = 0) -> int:

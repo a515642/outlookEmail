@@ -113,12 +113,39 @@ class AccountMultilineSearchTests(unittest.TestCase):
             ['target@example.com'],
         )
 
-    def test_more_than_two_hundred_lines_is_rejected(self):
-        response = self.client.get('/api/accounts/search?' + urlencode({
-            'q': '\n'.join(f'user{index}@example.com' for index in range(201)),
-        }))
+    def test_more_than_max_terms_is_rejected(self):
+        max_terms = web_outlook_app.ACCOUNT_SEARCH_MAX_TERMS
+        response = self.client.post('/api/accounts/search', json={
+            'q': '\n'.join(f'user{index}@example.com' for index in range(max_terms + 1)),
+        })
         self.assertEqual(response.status_code, 400)
-        self.assertIn('200', response.get_json()['error'])
+        self.assertIn(str(max_terms), response.get_json()['error'])
+
+    def test_thousands_of_search_terms_return_matches(self):
+        target_count = 1000
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.executemany(
+                '''
+                INSERT INTO accounts (email, group_id, remark, account_type, provider)
+                VALUES (?, 1, '', 'outlook', 'outlook')
+                ''',
+                [(f'bulk{index:04d}@example.com',) for index in range(target_count)],
+            )
+            db.commit()
+
+        terms = [f'bulk{index:04d}@example.com' for index in range(target_count)]
+        terms.extend(f'no-match-{index:05d}.example' for index in range(1500))
+        self.assertGreater(len(terms), web_outlook_app.ACCOUNT_SEARCH_SQL_MAX_TERMS)
+
+        body = self._search_post({'q': '\n'.join(terms), 'limit': 50, 'offset': 0})
+        self.assertEqual(body['total'], target_count)
+        self.assertEqual(len(body['accounts']), 50)
+        self.assertTrue(body['has_more'])
+
+        page = self._search_post({'q': '\n'.join(terms), 'limit': 50, 'offset': target_count - 10})
+        self.assertEqual(len(page['accounts']), 10)
+        self.assertFalse(page['has_more'])
 
     def test_post_accepts_long_export_list_without_url_limit(self):
         targets = [f'bulk{index:03d}@example.com' for index in range(120)]
@@ -174,12 +201,13 @@ class AccountMultilineSearchTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.get_json()['success'])
 
-    def test_post_limits_terms_same_as_get(self):
+    def test_post_enforces_max_terms(self):
+        max_terms = web_outlook_app.ACCOUNT_SEARCH_MAX_TERMS
         response = self.client.post('/api/accounts/search', json={
-            'q': '\n'.join(f'user{index}@example.com' for index in range(201)),
+            'q': '\n'.join(f'user{index}@example.com' for index in range(max_terms + 1)),
         })
         self.assertEqual(response.status_code, 400)
-        self.assertIn('200', response.get_json()['error'])
+        self.assertIn(str(max_terms), response.get_json()['error'])
 
     def test_frontend_searches_with_post_json_body(self):
         source = (ROOT_DIR / 'static' / 'js' / 'index' / '02-groups.js').read_text(encoding='utf-8')

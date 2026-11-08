@@ -1922,8 +1922,29 @@ def api_search_accounts():
     if not query:
         return jsonify(build_account_list_response([], 0, list_args['limit'], list_args['offset']))
 
-    if len(normalize_account_search_terms(query)) > ACCOUNT_SEARCH_MAX_TERMS:
+    search_terms = normalize_account_search_terms(query)
+    if len(search_terms) > ACCOUNT_SEARCH_MAX_TERMS:
         return jsonify({'success': False, 'error': f'搜索关键词最多支持 {ACCOUNT_SEARCH_MAX_TERMS} 个'}), 400
+
+    if len(search_terms) > ACCOUNT_SEARCH_SQL_MAX_TERMS:
+        accounts, total = search_account_records_large(
+            query,
+            group_id=group_id,
+            limit=list_args['limit'],
+            offset=list_args['offset'],
+            sort_by=list_args['sort_by'],
+            sort_order=list_args['sort_order'],
+            tag_ids=list_args['tag_ids'],
+            include_untagged=list_args['include_untagged'],
+            exclude_tag_ids=list_args['exclude_tag_ids'],
+        )
+        safe_accounts = [serialize_account_summary(acc, {}) for acc in accounts]
+        return jsonify(build_account_list_response(
+            safe_accounts,
+            total,
+            list_args['limit'],
+            list_args['offset'],
+        ))
 
     accounts = search_account_records(
         query,

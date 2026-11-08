@@ -2,7 +2,7 @@
 
         // ==================== 分组相关 ====================
 
-        const ACCOUNT_SEARCH_MAX_TERMS = 200;
+        const ACCOUNT_SEARCH_MAX_TERMS = 10000;
         const ACCOUNT_SEARCH_EXPORT_SEPARATOR = '----';
         const ACCOUNT_SEARCH_INPUT_MAX_HEIGHT = 160;
         const ACCOUNT_SEARCH_QUERY_STORAGE_KEY = 'outlook_account_search_query';
@@ -2058,7 +2058,7 @@
             }
 
             if (getAccountSearchTerms(query).length > ACCOUNT_SEARCH_MAX_TERMS) {
-                const message = '搜索关键词最多支持 200 个';
+                const message = `搜索关键词最多支持 ${ACCOUNT_SEARCH_MAX_TERMS} 个`;
                 if (append) {
                     showToast(message, 'warning');
                 } else {
