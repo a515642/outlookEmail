@@ -356,6 +356,12 @@
             color: #3730a3;
         }
 
+        .group-item-id-badge {
+            padding: 1px 6px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
         .group-actions {
             display: none;
             align-items: center;

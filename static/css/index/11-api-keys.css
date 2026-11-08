@@ -100,6 +100,15 @@
             border-color: var(--skin-border);
         }
 
+        .api-key-group-id {
+            margin-left: 5px;
+            color: var(--skin-text-muted);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 10.5px;
+            font-variant-numeric: tabular-nums;
+            opacity: 0.75;
+        }
+
         .api-key-group-cell {
             max-width: 220px;
         }

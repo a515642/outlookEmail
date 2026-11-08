@@ -367,6 +367,7 @@
                             ${hasChildren && !isTempGroup ? `<button type="button" class="group-toggle ${collapsed ? 'collapsed' : ''}" onclick="toggleGroupCollapsed(event, ${group.id})" title="${collapsed ? '展开' : '折叠'}">▾</button>` : '<span class="group-toggle-spacer"></span>'}
                             <div class="group-color" style="background-color: ${group.color || '#666'}"></div>
                             <span class="group-name">${escapeHtml(groupName)}${isTempGroup ? ' ⚡' : ''}</span>
+                            ${groupIdBadgeText ? `<span class="group-id-badge group-item-id-badge" title="分组 ID">ID ${escapeHtml(groupIdBadgeText)}</span>` : ''}
                             <span class="group-count">${count || 0}</span>
                             <div class="group-actions">
                                 ${!isTempGroup ? `<button class="group-action-btn" onclick="event.stopPropagation(); showCreateGroupShareModal(${group.id})" title="分享分组">🔗</button>` : ''}

@@ -27,13 +27,23 @@
         }
 
         function formatApiKeyGroups(key) {
-            const names = Array.isArray(key && key.groups)
-                ? key.groups.map(group => group.name).filter(Boolean)
+            const groupItems = Array.isArray(key && key.groups)
+                ? key.groups
+                    .map(group => ({
+                        id: Number(group.id),
+                        name: String((group && group.name) || '').trim(),
+                    }))
+                    .filter(group => group.name)
                 : [];
-            if (!names.length) {
+            if (!groupItems.length) {
                 return '<span class="api-key-muted">未授权</span>';
             }
-            return names.map(name => `<span class="api-key-group-badge">${escapeHtml(name)}</span>`).join(' ');
+            return groupItems.map(group => {
+                const idText = Number.isFinite(group.id)
+                    ? `<span class="api-key-group-id" title="分组 ID">ID ${group.id}</span>`
+                    : '';
+                return `<span class="api-key-group-badge">${escapeHtml(group.name)}${idText}</span>`;
+            }).join(' ');
         }
 
         function renderApiKeyTable() {
@@ -124,12 +134,16 @@
                 container.innerHTML = '<span class="api-key-muted">分组尚未加载，请先刷新分组列表。</span>';
                 return;
             }
-            container.innerHTML = options.map(option => `
+            container.innerHTML = options.map(option => {
+                const groupId = Number(option.id);
+                const idText = Number.isFinite(groupId) ? `（ID: ${groupId}）` : '';
+                return `
                 <label class="api-key-checkbox-item">
-                    <input type="checkbox" class="api-key-group-checkbox" value="${Number(option.id)}" ${selected.has(Number(option.id)) ? 'checked' : ''}>
-                    <span>${escapeHtml(option.label)}</span>
+                    <input type="checkbox" class="api-key-group-checkbox" value="${groupId}" ${selected.has(groupId) ? 'checked' : ''}>
+                    <span>${escapeHtml(option.label)}${escapeHtml(idText)}</span>
                 </label>
-            `).join('');
+            `;
+            }).join('');
         }
 
         async function ensureApiKeyGroupsLoaded() {

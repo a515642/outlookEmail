@@ -308,6 +308,8 @@ class HierarchicalGroupTests(unittest.TestCase):
         self.assertIn('.group-description', layout_css)
         self.assertIn('const isMovable = !isSystem && !isDefault', groups_js)
         self.assertIn('group.descendant_account_count ?? group.account_count ?? 0', groups_js)
+        self.assertIn('group-item-id-badge', groups_js)
+        self.assertIn('ID ${escapeHtml(groupIdBadgeText)}', groups_js)
         self.assertIn('syncExportGroupCheckboxStates', accounts_js)
         self.assertIn("document.querySelectorAll('.export-group-checkbox:checked')", accounts_js)
         self.assertNotIn('hasSelectedExportGroupHierarchyConflict', accounts_js)

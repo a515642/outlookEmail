@@ -2863,9 +2863,12 @@ ${details}
                 return;
             }
 
-            nameEl.textContent = '';
-            idBadgeEl.textContent = '';
-            idBadgeEl.style.display = 'none';
+            nameEl.textContent = String(group.name || '').trim() || '未命名分组';
+            const badgeText = typeof formatGroupIdBadgeText === 'function'
+                ? formatGroupIdBadgeText(group.id)
+                : '';
+            idBadgeEl.textContent = badgeText ? `ID ${badgeText}` : '';
+            idBadgeEl.style.display = badgeText ? '' : 'none';
         }
 
         // ------------------ 折叠分组栏 & 极简模式 ------------------

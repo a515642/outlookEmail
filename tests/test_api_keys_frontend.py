@@ -58,6 +58,11 @@ class ApiKeysFrontendTests(unittest.TestCase):
         self.assertIn("'js/index/17-api-keys.js'", self.bootstrap)
         self.assertIn("'css/index/11-api-keys.css'", self.bootstrap)
 
+    def test_group_ids_visible_in_api_key_ui(self):
+        # 分组列表徽标与选择清单都需要展示分组 ID，便于与 /api/v1 返回的 group_id 对应。
+        self.assertIn('class="api-key-group-id"', self.js)
+        self.assertIn('（ID: ${groupId}）', self.js)
+
     def test_expected_functions_exist(self):
         for function_name in [
             'loadApiKeyList',
