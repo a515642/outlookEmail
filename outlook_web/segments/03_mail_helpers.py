@@ -134,9 +134,13 @@ def is_proxy_connection_error(exc: Exception) -> bool:
     ))
 
 
-def should_retry_next_proxy(exc: Exception, proxy_candidate: str) -> bool:
+def should_retry_next_proxy(exc: Exception, proxy_candidate: str, method: str = '') -> bool:
     if proxy_candidate == DIRECT_PROXY_SENTINEL:
         return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+    # 代理池中常有连得上但读超时的出口，幂等请求换一个候选再试一次；
+    # POST（如 OAuth 刷新）不重试，避免刷新令牌已被服务端轮换后再次提交。
+    if isinstance(exc, requests.exceptions.ReadTimeout) and str(method).upper() in {'GET', 'HEAD'}:
+        return True
     return is_proxy_connection_error(exc)
 
 
@@ -329,7 +333,7 @@ def request_with_proxy_failover(method: str, url: str, *, proxy_url: str = None,
                 exc.proxy_failures = list(proxy_failures)
             except Exception:
                 pass
-            if index == len(candidates) - 1 or not should_retry_next_proxy(exc, candidate):
+            if index == len(candidates) - 1 or not should_retry_next_proxy(exc, candidate, method):
                 raise
             app.logger.warning(
                 "Proxy candidate %s failed for %s %s: %s",

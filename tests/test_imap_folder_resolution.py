@@ -4670,6 +4670,41 @@ class MailFetchErrorPayloadTests(unittest.TestCase):
                 self.assertEqual(result['error']['reason_code'], reason_code)
                 self.assertEqual(result['error']['status'], 500)
 
+    def test_get_read_timeout_retries_next_proxy_candidate(self):
+        read_timeout = web_outlook_app.requests.exceptions.ReadTimeout('read timed out')
+        response = object()
+        with patch.object(
+            web_outlook_app.requests,
+            'request',
+            side_effect=[read_timeout, response],
+        ) as request_mock:
+            result = web_outlook_app.request_with_proxy_failover(
+                'get',
+                'https://graph.microsoft.com/v1.0/me/messages',
+                proxy_url='socks5h://user:pass@proxy-a.example:1080',
+                fallback_proxy_urls=['socks5h://user:pass@proxy-b.example:1080'],
+            )
+
+        self.assertIs(result, response)
+        self.assertEqual(request_mock.call_count, 2)
+
+    def test_post_read_timeout_does_not_retry_next_proxy_candidate(self):
+        read_timeout = web_outlook_app.requests.exceptions.ReadTimeout('read timed out')
+        with patch.object(
+            web_outlook_app.requests,
+            'request',
+            side_effect=[read_timeout],
+        ) as request_mock:
+            with self.assertRaises(web_outlook_app.requests.exceptions.ReadTimeout):
+                web_outlook_app.request_with_proxy_failover(
+                    'post',
+                    'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+                    proxy_url='socks5h://user:pass@proxy-a.example:1080',
+                    fallback_proxy_urls=['socks5h://user:pass@proxy-b.example:1080'],
+                )
+
+        self.assertEqual(request_mock.call_count, 1)
+
     def test_direct_fallback_failure_is_reported_as_network_not_proxy(self):
         proxy_error = web_outlook_app.requests.exceptions.ProxyError(
             'Unable to connect to proxy'
