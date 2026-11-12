@@ -255,6 +255,45 @@ POST /accounts/release      → 提前归还（可选）
 
 当前没有按日期区间或“仅未读”过滤的参数；如需按时间筛选，请用返回的 `date` 字段自行过滤。
 
+### 5.2.1 等待验证码时的轮询建议
+
+服务端**不做邮件列表缓存**，每次请求都会向上游读取最新邮件，所以实时性有保障。按下面的方式轮询，可以兼顾实时性和稳定性：
+
+1. **轮询间隔建议 2–3 秒**，不要低于 1 秒；
+2. **只等最新一封时用 `top=1`**，需要最近几封用 `top=5`，不要每次都拉 20 封；
+3. **只需要收件箱时不要用 `folder=all`**，它会同时读取 inbox 和 junkemail，等于双倍请求；
+4. **保持参数稳定**（相同的 `folder` / `skip` / `top`）。服务端会把同一时刻的相同请求合并为一次上游调用，多个业务轮询同一个邮箱时尤其有用；
+5. 验证码通常 5–10 分钟有效，2–3 秒的间隔足够，不必高频空转；
+6. 同一邮箱被多个接入方同时轮询时，上游会对“应用 + 邮箱”限流（10 分钟内 10,000 次、最多 4 个并发），建议同一业务复用同一个 Key，并固定查询参数。
+
+示例（Python，轮询最新一封邮件）：
+
+```python
+import time
+import requests
+
+API = "https://your-domain.example"
+HEADERS = {"X-API-Key": "okv1_xxx"}
+
+def wait_for_code(email, timeout=120, interval=3):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        resp = requests.get(
+            f"{API}/api/v1/mail/messages",
+            headers=HEADERS,
+            params={"email": email, "folder": "inbox", "top": 1},
+            timeout=15,
+        )
+        if resp.status_code == 429:
+            time.sleep(int(resp.headers.get("Retry-After", "5")))
+            continue
+        data = resp.json()
+        if data.get("success") and data["data"]["emails"]:
+            return data["data"]["emails"][0]
+        time.sleep(interval)
+    return None
+```
+
 ### 5.3 GET `/api/v1/mail/messages/<message_id>`
 
 参数：
