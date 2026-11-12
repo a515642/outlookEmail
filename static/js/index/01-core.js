@@ -44,7 +44,7 @@
         let excludedTagFilters = new Set();
         let tagFilterKeyword = '';
         let responsiveUiResizeTimer = null;
-        const DEFAULT_MAIL_FETCH_TIMEOUT_SECONDS = 120;
+        const DEFAULT_MAIL_FETCH_TIMEOUT_SECONDS = 30;
         const MAIL_FETCH_TIMEOUT_MIN_SECONDS = 30;
         const MAIL_FETCH_TIMEOUT_MAX_SECONDS = 300;
         const EMAIL_LIST_REQUEST_TIMEOUT_BUFFER_MS = 10000;
@@ -2686,6 +2686,12 @@
                 }
                 if (code === 'EMAIL_FETCH_FAILED') {
                     return `获取邮件失败：${msg}`;
+                }
+                if (code === 'EMAIL_FETCH_BUSY' || code === 'EMAIL_FETCH_COOLDOWN') {
+                    return msg || '当前邮件请求较多，请稍后重试';
+                }
+                if (code === 'EMAIL_FETCH_RETRY') {
+                    return msg || '邮件请求失败，请稍后重试';
                 }
                 if (code === 'IMAP_CONNECTION_FAILED') {
                     return 'IMAP 连接失败：无法连接到邮件服务器';
