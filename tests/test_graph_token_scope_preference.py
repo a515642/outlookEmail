@@ -25,7 +25,9 @@ class _FakeResponse:
 class GraphTokenScopePreferenceTests(unittest.TestCase):
     def setUp(self):
         web_outlook_app.reset_graph_token_scope_cache()
+        web_outlook_app.reset_access_token_cache()
         self.addCleanup(web_outlook_app.reset_graph_token_scope_cache)
+        self.addCleanup(web_outlook_app.reset_access_token_cache)
 
     def test_last_successful_scope_is_tried_first_next_time(self):
         rejected = _FakeResponse(400, {'error': 'invalid_scope'})
@@ -107,6 +109,7 @@ class GraphTokenScopePreferenceTests(unittest.TestCase):
         for name, required_scope, operation in operations:
             with self.subTest(operation=name):
                 web_outlook_app.reset_graph_token_scope_cache()
+                web_outlook_app.reset_access_token_cache()
                 web_outlook_app.remember_graph_token_scope(
                     'client-id', 'refresh-token', 'https://graph.microsoft.com/Mail.Read offline_access',
                 )
@@ -171,7 +174,9 @@ class AccountGraphTokenScopePersistenceTests(unittest.TestCase):
 
     def setUp(self):
         web_outlook_app.reset_graph_token_scope_cache()
+        web_outlook_app.reset_access_token_cache()
         self.addCleanup(web_outlook_app.reset_graph_token_scope_cache)
+        self.addCleanup(web_outlook_app.reset_access_token_cache)
         with web_outlook_app.app.app_context():
             web_outlook_app.init_db()
             db = web_outlook_app.get_db()

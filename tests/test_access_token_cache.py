@@ -81,7 +81,8 @@ class AccessTokenCacheTests(unittest.TestCase):
             ],
         ) as token_mock:
             web_outlook_app.get_access_token_graph_result('client', 'refresh')
-            key = ('graph', 'client', 'refresh')
+            scope_key = web_outlook_app.access_token_cache_scope_key('client', 'refresh')
+            key = ('graph', 'client', 'refresh', scope_key)
             with web_outlook_app.access_token_cache_lock:
                 web_outlook_app.access_token_cache[key] = ('token-old', time.monotonic() - 1)
             refreshed = web_outlook_app.get_access_token_graph_result('client', 'refresh')
@@ -115,6 +116,28 @@ class AccessTokenCacheTests(unittest.TestCase):
 
         self.assertEqual(graph['access_token'], 'graph-token')
         self.assertEqual(imap['access_token'], 'imap-token')
+
+    def test_scope_is_part_of_cache_key(self):
+        send_scope = 'https://graph.microsoft.com/Mail.Send'
+        with self._enable_cache(), patch.object(
+            web_outlook_app,
+            'request_graph_token_response',
+            side_effect=[
+                FakeTokenResponse('read-token'),
+                FakeTokenResponse('send-token'),
+                FakeTokenResponse('read-token-2'),
+            ],
+        ) as token_mock:
+            read_first = web_outlook_app.get_access_token_graph_result('client', 'refresh')
+            send_first = web_outlook_app.get_access_token_graph_result(
+                'client', 'refresh', required_scope=send_scope,
+            )
+            read_second = web_outlook_app.get_access_token_graph_result('client', 'refresh')
+
+        self.assertEqual(token_mock.call_count, 2)
+        self.assertEqual(read_first['access_token'], 'read-token')
+        self.assertEqual(send_first['access_token'], 'send-token')
+        self.assertEqual(read_second['access_token'], 'read-token')
 
     def test_cache_respects_max_entries(self):
         with self._enable_cache(), patch.object(web_outlook_app, 'ACCESS_TOKEN_CACHE_MAX_ENTRIES', 2):

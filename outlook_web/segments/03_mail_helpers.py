@@ -531,10 +531,27 @@ def reset_access_token_cache() -> None:
         access_token_cache.clear()
 
 
-def get_cached_access_token(token_kind: str, client_id: str, refresh_token: str) -> Optional[str]:
+def access_token_cache_scope_key(client_id: str, refresh_token: str, required_scope: str = '') -> str:
+    """token 缓存按 scope 区分，避免只读 token 被发信等写操作复用。"""
+    scope = str(required_scope or '').strip()
+    if scope:
+        return scope
+    try:
+        return str(get_preferred_graph_token_scope(client_id, refresh_token) or '').strip()
+    except Exception:
+        return ''
+
+
+def get_cached_access_token(token_kind: str, client_id: str, refresh_token: str,
+                            scope_key: str = '') -> Optional[str]:
     if not access_token_cache_active():
         return None
-    key = (str(token_kind or ''), str(client_id or ''), str(refresh_token or ''))
+    key = (
+        str(token_kind or ''),
+        str(client_id or ''),
+        str(refresh_token or ''),
+        str(scope_key or ''),
+    )
     now = time.monotonic()
     with access_token_cache_lock:
         entry = access_token_cache.get(key)
@@ -548,7 +565,7 @@ def get_cached_access_token(token_kind: str, client_id: str, refresh_token: str)
 
 
 def cache_access_token(token_kind: str, client_id: str, refresh_token: str,
-                       token: str, expires_in: Any = None) -> None:
+                       token: str, expires_in: Any = None, scope_key: str = '') -> None:
     if not token or not access_token_cache_active():
         return
     try:
@@ -557,7 +574,12 @@ def cache_access_token(token_kind: str, client_id: str, refresh_token: str,
         lifetime = 3600
     lifetime = max(60, min(lifetime, 3600))
     ttl = max(30, lifetime - ACCESS_TOKEN_CACHE_SAFETY_SECONDS)
-    key = (str(token_kind or ''), str(client_id or ''), str(refresh_token or ''))
+    key = (
+        str(token_kind or ''),
+        str(client_id or ''),
+        str(refresh_token or ''),
+        str(scope_key or ''),
+    )
     expires_at = time.monotonic() + ttl
     with access_token_cache_lock:
         if key not in access_token_cache and len(access_token_cache) >= ACCESS_TOKEN_CACHE_MAX_ENTRIES:
@@ -697,7 +719,8 @@ def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url:
                                   fallback_proxy_urls: Optional[List[str]] = None, *,
                                   required_scope: str = '') -> Dict[str, Any]:
     """获取 Graph API access_token（包含错误详情）"""
-    cached_token = get_cached_access_token('graph', client_id, refresh_token)
+    scope_key = access_token_cache_scope_key(client_id, refresh_token, required_scope)
+    cached_token = get_cached_access_token('graph', client_id, refresh_token, scope_key)
     if cached_token:
         return {"success": True, "access_token": cached_token}
     try:
@@ -736,7 +759,17 @@ def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url:
                 )
             }
 
-        cache_access_token('graph', client_id, refresh_token, access_token, payload.get("expires_in"))
+        cache_access_token(
+            'graph', client_id, refresh_token, access_token,
+            payload.get("expires_in"), scope_key,
+        )
+        # 首次成功请求会把 scope 记为偏好，补写一份以便后续 auto 模式直接命中。
+        resolved_scope_key = access_token_cache_scope_key(client_id, refresh_token, required_scope)
+        if resolved_scope_key and resolved_scope_key != scope_key:
+            cache_access_token(
+                'graph', client_id, refresh_token, access_token,
+                payload.get("expires_in"), resolved_scope_key,
+            )
         return {"success": True, "access_token": access_token}
     except Exception as exc:
         return {
