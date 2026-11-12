@@ -1,7 +1,10 @@
 from __future__ import annotations
 from outlook_web.icloud_mail import message_recipient_headers
 
+import os
 import secrets
+import threading
+import time
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -504,6 +507,65 @@ def extract_refresh_token_from_response(response) -> str:
     return token.strip() if isinstance(token, str) else ''
 
 
+ACCESS_TOKEN_CACHE_MAX_ENTRIES = 2000
+ACCESS_TOKEN_CACHE_SAFETY_SECONDS = 300
+access_token_cache: Dict[tuple, tuple] = {}
+access_token_cache_lock = threading.Lock()
+
+
+def access_token_cache_active() -> bool:
+    """测试环境默认关闭 token 缓存，避免 mock 用例互相影响。"""
+    try:
+        if app.config.get('TESTING') and os.getenv('ACCESS_TOKEN_CACHE_TESTING', '0') != '1':
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def reset_access_token_cache() -> None:
+    with access_token_cache_lock:
+        access_token_cache.clear()
+
+
+def get_cached_access_token(token_kind: str, client_id: str, refresh_token: str) -> Optional[str]:
+    if not access_token_cache_active():
+        return None
+    key = (str(token_kind or ''), str(client_id or ''), str(refresh_token or ''))
+    now = time.monotonic()
+    with access_token_cache_lock:
+        entry = access_token_cache.get(key)
+        if not entry:
+            return None
+        token, expires_at = entry
+        if expires_at <= now:
+            access_token_cache.pop(key, None)
+            return None
+        return token
+
+
+def cache_access_token(token_kind: str, client_id: str, refresh_token: str,
+                       token: str, expires_in: Any = None) -> None:
+    if not token or not access_token_cache_active():
+        return
+    try:
+        lifetime = int(expires_in)
+    except (TypeError, ValueError):
+        lifetime = 3600
+    lifetime = max(60, min(lifetime, 3600))
+    ttl = max(30, lifetime - ACCESS_TOKEN_CACHE_SAFETY_SECONDS)
+    key = (str(token_kind or ''), str(client_id or ''), str(refresh_token or ''))
+    expires_at = time.monotonic() + ttl
+    with access_token_cache_lock:
+        if key not in access_token_cache and len(access_token_cache) >= ACCESS_TOKEN_CACHE_MAX_ENTRIES:
+            now = time.monotonic()
+            for stale_key in [item for item, (_, exp) in access_token_cache.items() if exp <= now]:
+                access_token_cache.pop(stale_key, None)
+            while len(access_token_cache) >= ACCESS_TOKEN_CACHE_MAX_ENTRIES:
+                access_token_cache.pop(next(iter(access_token_cache)), None)
+        access_token_cache[key] = (token, expires_at)
+
+
 def request_graph_token_response(client_id: str, refresh_token: str, proxy_url: str = None,
                                  fallback_proxy_urls: Optional[List[str]] = None,
                                  include_original_scope_fallback: bool = False,
@@ -622,6 +684,9 @@ def proxy_socket_context(proxy_url: str):
 def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url: str = None,
                                   fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
     """获取 Graph API access_token（包含错误详情）"""
+    cached_token = get_cached_access_token('graph', client_id, refresh_token)
+    if cached_token:
+        return {"success": True, "access_token": cached_token}
     try:
         res = request_graph_token_response(
             client_id,
@@ -657,6 +722,7 @@ def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url:
                 )
             }
 
+        cache_access_token('graph', client_id, refresh_token, access_token, payload.get("expires_in"))
         return {"success": True, "access_token": access_token}
     except Exception as exc:
         return {
@@ -1339,6 +1405,9 @@ def request_imap_token_response(client_id: str, refresh_token: str, proxy_url: s
 def get_access_token_imap_result(client_id: str, refresh_token: str, proxy_url: str = None,
                                  fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
     """获取 IMAP access_token（包含错误详情）"""
+    cached_token = get_cached_access_token('imap', client_id, refresh_token)
+    if cached_token:
+        return {"success": True, "access_token": cached_token}
     try:
         res = request_imap_token_response(client_id, refresh_token, proxy_url, fallback_proxy_urls)
 
@@ -1369,6 +1438,7 @@ def get_access_token_imap_result(client_id: str, refresh_token: str, proxy_url: 
                 )
             }
 
+        cache_access_token('imap', client_id, refresh_token, access_token, payload.get("expires_in"))
         return {"success": True, "access_token": access_token}
     except Exception as exc:
         return {
