@@ -968,8 +968,13 @@ def send_graph_mail_result(client_id: str, refresh_token: str, recipients: Any, 
 
 def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', skip: int = 0,
                      top: int = 20, proxy_url: str = None,
-                     fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
-    """使用 Graph API 获取邮件列表（支持分页和文件夹选择）"""
+                     fallback_proxy_urls: Optional[List[str]] = None,
+                     include_headers: bool = False) -> Dict[str, Any]:
+    """使用 Graph API 获取邮件列表（支持分页和文件夹选择）
+
+    include_headers=True 时额外返回原始邮件头（internetMessageHeaders）。
+    列表场景默认不取：该字段体积大且容易拖慢 Graph，iCloud 隐藏地址扫描时需要。
+    """
     token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not token_result.get("success"):
         return {"success": False, "error": token_result.get("error")}
@@ -988,10 +993,15 @@ def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', 
         folder_name = folder_map.get(folder.lower(), 'inbox')
 
         url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_name}/messages"
+        select_fields = (
+            "id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,bodyPreview"
+        )
+        if include_headers:
+            select_fields += ",internetMessageHeaders"
         params = {
             "$top": top,
             "$skip": skip,
-            "$select": "id,subject,from,toRecipients,ccRecipients,internetMessageHeaders,receivedDateTime,isRead,hasAttachments,bodyPreview",
+            "$select": select_fields,
             "$orderby": "receivedDateTime desc"
         }
         headers = {

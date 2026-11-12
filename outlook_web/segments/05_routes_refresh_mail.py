@@ -4211,6 +4211,10 @@ def _fetch_account_folder_emails_unlocked(account: Dict[str, Any], folder: str, 
     channel_order = get_outlook_mail_channel_order(account)
 
     def try_graph() -> Optional[Dict[str, Any]]:
+        graph_kwargs = {}
+        if account.get('_icloud_scan_address'):
+            # 仅 iCloud 隐藏地址扫描需要原始邮件头判断收件人；普通列表不取。
+            graph_kwargs['include_headers'] = True
         graph_result = get_emails_graph(
             account['client_id'],
             account['refresh_token'],
@@ -4219,6 +4223,7 @@ def _fetch_account_folder_emails_unlocked(account: Dict[str, Any], folder: str, 
             top,
             proxy_url,
             fallback_proxy_urls,
+            **graph_kwargs,
         )
         if graph_result.get('success'):
             record_outlook_mail_channel(account, 'graph')
