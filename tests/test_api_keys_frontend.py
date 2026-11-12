@@ -91,6 +91,15 @@ class ApiKeysFrontendTests(unittest.TestCase):
         self.assertIn('/revoke', self.js)
         self.assertIn('/audit?limit=100', self.js)
 
+    def test_delete_action_is_available(self):
+        self.assertIn("onclick=\"deleteApiKey(", self.js)
+        self.assertRegex(
+            self.js,
+            r'function\s+deleteApiKey\s*\(keyId\)\s*\{',
+        )
+        self.assertIn("/api/settings/api-keys/${Number(keyId)}`, {method: 'DELETE'}", self.js)
+        self.assertIn('永久删除', self.js)
+
     def test_secret_is_never_written_to_browser_storage(self):
         self.assertNotIn('localStorage', self.js)
         self.assertNotIn('sessionStorage', self.js)

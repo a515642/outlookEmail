@@ -701,6 +701,22 @@ def api_revoke_api_key(key_id):
     })
 
 
+@app.route('/api/settings/api-keys/<int:key_id>', methods=['DELETE'])
+@login_required
+def api_delete_api_key(key_id):
+    """永久删除 API Key 及其分组绑定、领取记录和审计记录。"""
+    db = get_db()
+    row = get_api_key_row(key_id)
+    if not row:
+        return jsonify({'success': False, 'error': 'API Key 不存在'}), 404
+    key_name = row['name']
+    db.execute('DELETE FROM api_keys WHERE id = ?', (key_id,))
+    db.commit()
+    clear_api_key_rate_bucket(key_id)
+    log_audit('delete', 'api_key', str(key_id), f'删除 API Key：{key_name}')
+    return jsonify({'success': True, 'message': 'API Key 已删除'})
+
+
 @app.route('/api/settings/api-keys/<int:key_id>/audit', methods=['GET'])
 @login_required
 def api_get_api_key_audit(key_id):

@@ -74,6 +74,7 @@
                     isActive
                         ? `<button class="btn btn-danger btn-sm" type="button" onclick="revokeApiKey(${keyId})">撤销</button>`
                         : '',
+                    `<button class="btn btn-danger btn-sm" type="button" onclick="deleteApiKey(${keyId})">删除</button>`,
                 ].filter(Boolean).join('');
                 return `
                     <tr>
@@ -397,6 +398,29 @@
                 showToast('API Key 已撤销', 'success');
             } catch (error) {
                 showToast(error.message || '撤销失败', 'error');
+            }
+        }
+
+        async function deleteApiKey(keyId) {
+            const key = apiKeyList.find(item => Number(item.id) === Number(keyId));
+            const name = key ? key.name : `#${keyId}`;
+            const confirmed = await showConfirmModal(
+                `确定要永久删除 API Key「${name}」吗？\n删除后无法恢复，分组绑定和调用记录也会一并删除。`,
+                { title: '删除 API Key', confirmText: '永久删除' }
+            );
+            if (!confirmed) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/settings/api-keys/${Number(keyId)}`, {method: 'DELETE'});
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error((data && data.error) || '删除失败');
+                }
+                await loadApiKeyList();
+                showToast('API Key 已删除', 'success');
+            } catch (error) {
+                showToast(error.message || '删除失败', 'error');
             }
         }
 

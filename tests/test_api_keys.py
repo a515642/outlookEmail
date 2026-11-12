@@ -206,6 +206,50 @@ class ApiKeysTestBase(unittest.TestCase):
         self.assertEqual(again.status_code, 200)
         self.assertTrue(again.get_json()['success'])
 
+    def test_delete_removes_key_and_related_rows(self):
+        group_id = self._insert_group('删除')
+        account_id = self._insert_account('delete@example.com', group_id)
+        key, secret = self._create_key([group_id])
+        self._insert_claim(key['id'], account_id, 'delete@example.com')
+
+        response = self.client.delete(f'/api/settings/api-keys/{key["id"]}')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            self.assertIsNone(
+                db.execute('SELECT id FROM api_keys WHERE id = ?', (key['id'],)).fetchone()
+            )
+            self.assertEqual(
+                db.execute('SELECT COUNT(*) c FROM api_key_groups WHERE api_key_id = ?',
+                           (key['id'],)).fetchone()['c'],
+                0,
+            )
+            self.assertEqual(
+                db.execute('SELECT COUNT(*) c FROM api_key_claims WHERE api_key_id = ?',
+                           (key['id'],)).fetchone()['c'],
+                0,
+            )
+
+        rejected = self.client.get(
+            '/api/v1/mail/folders?email=delete@example.com',
+            headers=self._headers(secret),
+        )
+        self.assertEqual(rejected.status_code, 401)
+        self.assertEqual(rejected.get_json()['error_code'], 'invalid_api_key')
+
+        again = self.client.delete(f'/api/settings/api-keys/{key["id"]}')
+        self.assertEqual(again.status_code, 404)
+
+    def test_delete_requires_login(self):
+        group_id = self._insert_group('删除登录')
+        key, _ = self._create_key([group_id])
+        with self.client.session_transaction() as session:
+            session.clear()
+        response = self.client.delete(f'/api/settings/api-keys/{key["id"]}')
+        self.assertEqual(response.status_code, 401)
+
     # ---------- authentication ----------
 
     def test_auth_errors_and_bearer(self):
