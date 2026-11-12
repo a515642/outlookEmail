@@ -969,11 +969,13 @@ def send_graph_mail_result(client_id: str, refresh_token: str, recipients: Any, 
 def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', skip: int = 0,
                      top: int = 20, proxy_url: str = None,
                      fallback_proxy_urls: Optional[List[str]] = None,
-                     include_headers: bool = False) -> Dict[str, Any]:
+                     include_headers: bool = False,
+                     recipient_filter: str = '') -> Dict[str, Any]:
     """使用 Graph API 获取邮件列表（支持分页和文件夹选择）
 
     include_headers=True 时额外返回原始邮件头（internetMessageHeaders）。
     列表场景默认不取：该字段体积大且容易拖慢 Graph，iCloud 隐藏地址扫描时需要。
+    recipient_filter 非空时只返回收件人包含该地址的邮件（用于别名隔离）。
     """
     token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not token_result.get("success"):
@@ -1004,6 +1006,13 @@ def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', 
             "$select": select_fields,
             "$orderby": "receivedDateTime desc"
         }
+        normalized_recipient = str(recipient_filter or '').strip().lower()
+        if normalized_recipient:
+            safe_recipient = normalized_recipient.replace("'", "''")
+            params["$filter"] = (
+                "(toRecipients/any(r:r/emailAddress/address eq '{addr}') "
+                "or ccRecipients/any(r:r/emailAddress/address eq '{addr}'))"
+            ).format(addr=safe_recipient)
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Prefer": "outlook.body-content-type='text'"

@@ -253,6 +253,8 @@ POST /accounts/release      → 提前归还（可选）
 - 取最新 5 封：`top=5`（不超过 50）
 - 读取更早的邮件：增大 `skip`，如 `skip=5&top=5`
 
+**用别名 / plus 地址查询时**（`email` 与账号主邮箱不同，例如 `user+shop@outlook.com`），接口只返回收件人（To/Cc）包含该地址的邮件，分页和 `has_more` 也按过滤后的结果计算。用主邮箱查询则返回全部邮件。
+
 当前没有按日期区间或“仅未读”过滤的参数；如需按时间筛选，请用返回的 `date` 字段自行过滤。
 
 ### 5.2.1 等待验证码时的轮询建议
@@ -363,6 +365,7 @@ curl -s "https://mail.example.com/api/v1/mail/messages/AAMkAG...?email=user@exam
 | 403 | `scope_denied` | Key 缺少对应权限 | 联系管理员补充 scope |
 | 403 | `group_not_allowed` | 邮箱不在 Key 的授权分组内 | 只能访问被授权分组的邮箱 |
 | 404 | `account_not_found` | 邮箱不存在 | 检查地址 |
+| 404 | `mail_not_found` | 邮件不存在，或不属于所查询的别名 | 用主邮箱查询，或检查 `to` 地址 |
 | 404 | `no_account_available` | 暂无可领取邮箱 | 稍后重试 |
 | 404 | `claim_not_found` | 当前 Key 未领取该邮箱 | 先 claim 再 release |
 | 429 | `rate_limited` | 超过每分钟限速 | 按 `Retry-After` 秒数等待后重试 |

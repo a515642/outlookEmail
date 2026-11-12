@@ -27,7 +27,7 @@ class FakeGraphListResponse:
 
 
 class GraphListProjectionTests(unittest.TestCase):
-    def _fetch(self, include_headers=False):
+    def _fetch(self, include_headers=False, recipient_filter=''):
         captured = {}
 
         def fake_get(url, **kwargs):
@@ -40,6 +40,7 @@ class GraphListProjectionTests(unittest.TestCase):
             result = web_outlook_app.get_emails_graph(
                 'client', 'refresh', 'inbox', 0, 20, 'direct', [],
                 include_headers=include_headers,
+                recipient_filter=recipient_filter,
             )
 
         self.assertTrue(result.get('success'))
@@ -54,6 +55,16 @@ class GraphListProjectionTests(unittest.TestCase):
     def test_list_projection_can_request_raw_headers(self):
         params = self._fetch(include_headers=True)
         self.assertIn('internetMessageHeaders', params['$select'])
+
+    def test_recipient_filter_is_pushed_down_to_graph(self):
+        params = self._fetch(recipient_filter='user+tag@outlook.com')
+        self.assertIn('toRecipients/any', params['$filter'])
+        self.assertIn('ccRecipients/any', params['$filter'])
+        self.assertIn("address eq 'user+tag@outlook.com'", params['$filter'])
+
+    def test_no_filter_by_default(self):
+        params = self._fetch()
+        self.assertNotIn('$filter', params)
 
 
 if __name__ == '__main__':

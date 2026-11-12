@@ -23,6 +23,16 @@ def get_api_v1_json_body() -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def resolve_api_v1_recipient_filter(account: Dict[str, Any]) -> str:
+    """别名/plus 地址查询时返回收件人过滤地址；主邮箱查询返回空。"""
+    requested = get_query_arg_preserve_plus('email', '').strip()
+    normalized_requested = normalize_email_address(requested)
+    normalized_account = normalize_email_address(account.get('email', ''))
+    if normalized_requested and normalized_requested != normalized_account:
+        return requested
+    return ''
+
+
 def serialize_api_v1_mail_list_item(item: Dict[str, Any], fallback_folder: str) -> Dict[str, Any]:
     row = dict(item or {})
     return {
@@ -200,7 +210,13 @@ def api_v1_mail_messages():
         return error_response
 
     try:
-        result = fetch_account_emails(account, folder, skip, top)
+        recipient_filter = resolve_api_v1_recipient_filter(account)
+        if recipient_filter:
+            result = fetch_account_emails(
+                account, folder, skip, top, recipient_filter=recipient_filter,
+            )
+        else:
+            result = fetch_account_emails(account, folder, skip, top)
     except Exception as exc:
         app.logger.warning('API v1 获取邮件列表失败: %s', exc)
         result = {'success': False, 'error': '获取邮件失败'}
@@ -265,6 +281,9 @@ def api_v1_mail_message_detail(message_id):
         return api_v1_error('mail_fetch_failed', '获取邮件详情失败，请稍后重试', 502)
 
     detail = result.get('email') or {}
+    recipient_filter = resolve_api_v1_recipient_filter(account)
+    if recipient_filter and not email_matches_recipient_filter(detail, recipient_filter):
+        return api_v1_error('mail_not_found', '邮件不存在或不属于该别名', 404)
     return api_v1_success({
         'email': account.get('email', ''),
         'message_id': str(message_id),

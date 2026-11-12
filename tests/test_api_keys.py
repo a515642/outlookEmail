@@ -559,6 +559,74 @@ class ApiKeysTestBase(unittest.TestCase):
         self.assertEqual(failed.get_json()['error_code'], 'mail_fetch_failed')
         self.assertNotIn('upstream boom', failed.get_data(as_text=True))
 
+    def test_alias_mail_list_filters_by_recipient(self):
+        group_id = self._insert_group('别名过滤')
+        account_id = self._insert_account('alias-primary@example.com', group_id)
+        self._add_alias(account_id, 'alias-primary+shop@example.com')
+        _key, secret = self._create_key([group_id])
+
+        with patch.object(web_outlook_app, 'fetch_account_emails', return_value={
+            'success': True,
+            'emails': [],
+            'has_more': False,
+        }) as mocked:
+            response = self.client.get(
+                '/api/v1/mail/messages?email=alias-primary+shop@example.com&folder=inbox',
+                headers=self._headers(secret),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mocked.assert_called_once()
+        self.assertEqual(
+            mocked.call_args.kwargs.get('recipient_filter'),
+            'alias-primary+shop@example.com',
+        )
+
+    def test_primary_mailbox_query_has_no_recipient_filter(self):
+        group_id = self._insert_group('主邮箱不过滤')
+        self._insert_account('primary-only@example.com', group_id)
+        _key, secret = self._create_key([group_id])
+
+        with patch.object(web_outlook_app, 'fetch_account_emails', return_value={
+            'success': True,
+            'emails': [],
+            'has_more': False,
+        }) as mocked:
+            response = self.client.get(
+                '/api/v1/mail/messages?email=primary-only@example.com&folder=inbox',
+                headers=self._headers(secret),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(mocked.call_args.kwargs.get('recipient_filter'))
+
+    def test_alias_detail_rejects_mail_for_other_recipient(self):
+        group_id = self._insert_group('别名详情')
+        account_id = self._insert_account('detail-primary@example.com', group_id)
+        self._add_alias(account_id, 'detail-primary+shop@example.com')
+        _key, secret = self._create_key([group_id])
+
+        with patch.object(web_outlook_app, 'fetch_email_detail_for_account', return_value={
+            'success': True,
+            'email': {'id': 'msg-1', 'to': 'someone-else@example.com', 'cc': ''},
+        }):
+            rejected = self.client.get(
+                '/api/v1/mail/messages/msg-1?email=detail-primary+shop@example.com',
+                headers=self._headers(secret),
+            )
+        self.assertEqual(rejected.status_code, 404)
+        self.assertEqual(rejected.get_json()['error_code'], 'mail_not_found')
+
+        with patch.object(web_outlook_app, 'fetch_email_detail_for_account', return_value={
+            'success': True,
+            'email': {'id': 'msg-1', 'to': 'detail-primary+shop@example.com', 'cc': ''},
+        }):
+            allowed = self.client.get(
+                '/api/v1/mail/messages/msg-1?email=detail-primary+shop@example.com',
+                headers=self._headers(secret),
+            )
+        self.assertEqual(allowed.status_code, 200)
+
     def test_mail_detail_whitelists_fields(self):
         group_id = self._insert_group('正文')
         self._insert_account('detail@example.com', group_id)

@@ -4153,25 +4153,29 @@ def run_with_mail_guard(account: Dict[str, Any], inflight_key: tuple, work) -> D
 
 
 def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
-                                proxy_url: str = '', fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
+                                proxy_url: str = '', fallback_proxy_urls: List[str] = None,
+                                recipient_filter: str = '') -> Dict[str, Any]:
     folder_name = normalize_folder_name(folder)
     if folder_name not in VALID_MAIL_FOLDERS or folder_name == 'all':
         return {
             'success': False,
             'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS - {"all"} | {"all"}))}'
         }
-    inflight_key = ('list', mail_guard_account_key(account), folder_name, int(skip), int(top))
+    filter_key = str(recipient_filter or '').strip().lower()
+    inflight_key = ('list', mail_guard_account_key(account), folder_name, int(skip), int(top), filter_key)
     return run_with_mail_guard(
         account,
         inflight_key,
         lambda: _fetch_account_folder_emails_unlocked(
             account, folder_name, skip, top, proxy_url, fallback_proxy_urls,
+            recipient_filter=recipient_filter,
         ),
     )
 
 
 def _fetch_account_folder_emails_unlocked(account: Dict[str, Any], folder: str, skip: int, top: int,
-                                          proxy_url: str = '', fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
+                                          proxy_url: str = '', fallback_proxy_urls: List[str] = None,
+                                          recipient_filter: str = '') -> Dict[str, Any]:
     folder_name = normalize_folder_name(folder)
     if folder_name not in VALID_MAIL_FOLDERS or folder_name == 'all':
         return {
@@ -4215,6 +4219,8 @@ def _fetch_account_folder_emails_unlocked(account: Dict[str, Any], folder: str, 
         if account.get('_icloud_scan_address'):
             # 仅 iCloud 隐藏地址扫描需要原始邮件头判断收件人；普通列表不取。
             graph_kwargs['include_headers'] = True
+        if str(recipient_filter or '').strip():
+            graph_kwargs['recipient_filter'] = str(recipient_filter).strip()
         graph_result = get_emails_graph(
             account['client_id'],
             account['refresh_token'],
@@ -4289,7 +4295,54 @@ def _fetch_account_folder_emails_unlocked(account: Dict[str, Any], folder: str, 
     }
 
 
-def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int) -> Dict[str, Any]:
+def email_matches_recipient_filter(item: Dict[str, Any], address: str) -> bool:
+    """判断邮件收件人（To/Cc）是否包含指定地址，用于别名收件箱隔离。"""
+    target = str(address or '').strip().lower()
+    if not target:
+        return True
+    for field in ('to', 'cc'):
+        text = str(item.get(field) or '')
+        addresses = {part.strip().lower() for part in text.split(',') if part.strip()}
+        if target in addresses:
+            return True
+    return False
+
+
+MAIL_RECIPIENT_SCAN_BATCH = 50
+MAIL_RECIPIENT_SCAN_LIMIT = 500
+
+
+def scan_account_emails_for_recipient(account: Dict[str, Any], folder: str, skip: int, top: int,
+                                      recipient_filter: str) -> Dict[str, Any]:
+    """IMAP 等不支持服务端收件人过滤时，按批扫描后本地过滤。"""
+    matched = []
+    offset = 0
+    last_page_full = False
+    while offset < MAIL_RECIPIENT_SCAN_LIMIT and len(matched) < skip + top:
+        page = fetch_account_folder_emails(account, folder, offset, MAIL_RECIPIENT_SCAN_BATCH)
+        if not page.get('success'):
+            return page
+        rows = page.get('emails') or []
+        last_page_full = len(rows) >= MAIL_RECIPIENT_SCAN_BATCH
+        matched.extend(
+            item for item in rows
+            if email_matches_recipient_filter(item, recipient_filter)
+        )
+        if len(rows) < MAIL_RECIPIENT_SCAN_BATCH:
+            last_page_full = False
+            break
+        offset += MAIL_RECIPIENT_SCAN_BATCH
+    has_more = len(matched) > skip + top or (last_page_full and offset < MAIL_RECIPIENT_SCAN_LIMIT)
+    return {
+        'success': True,
+        'emails': matched[skip:skip + top],
+        'has_more': has_more,
+        'request_method': 'imap',
+    }
+
+
+def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
+                         recipient_filter: str = '') -> Dict[str, Any]:
     if account.get('icloud_address'):
         return fetch_icloud_isolated_emails(account, folder, skip, top)
     proxy_url = get_account_proxy_url(account)
@@ -4300,6 +4353,25 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
             'success': False,
             'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS))}'
         }
+    recipient_filter = str(recipient_filter or '').strip()
+    if recipient_filter and account.get('account_type') == 'imap':
+        if folder_name == 'all':
+            merged = []
+            for sub_folder in ('inbox', 'junkemail'):
+                page = scan_account_emails_for_recipient(
+                    account, sub_folder, 0, skip + top, recipient_filter,
+                )
+                if not page.get('success'):
+                    return page
+                merged.extend(page.get('emails') or [])
+            merged.sort(key=lambda item: str(item.get('date') or ''), reverse=True)
+            return {
+                'success': True,
+                'emails': merged[skip:skip + top],
+                'has_more': len(merged) > skip + top,
+                'request_method': 'imap',
+            }
+        return scan_account_emails_for_recipient(account, folder_name, skip, top, recipient_filter)
 
     if folder_name == 'all':
         merged_top = max(1, min(100, top * 2))
@@ -4307,18 +4379,12 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
         results = {}
         executor = ThreadPoolExecutor(max_workers=len(folder_jobs), thread_name_prefix='mail-folder-fetch')
         account['_disable_authorization_type_record'] = True
-        future_map = {
-            folder_job: executor.submit(
-                fetch_account_folder_emails,
-                account,
-                folder_job,
-                skip,
-                top,
-                proxy_url,
-                fallback_proxy_urls,
-            )
-            for folder_job in folder_jobs
-        }
+        future_map = {}
+        for folder_job in folder_jobs:
+            submit_args = (account, folder_job, skip, top, proxy_url, fallback_proxy_urls)
+            if recipient_filter:
+                submit_args += (recipient_filter,)
+            future_map[folder_job] = executor.submit(fetch_account_folder_emails, *submit_args)
         try:
             mail_fetch_timeout_seconds = get_mail_fetch_timeout_seconds()
             done, not_done = wait(future_map.values(), timeout=mail_fetch_timeout_seconds)
@@ -4373,6 +4439,10 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
             merged_top
         )
 
+    if recipient_filter:
+        return fetch_account_folder_emails(
+            account, folder_name, skip, top, proxy_url, fallback_proxy_urls, recipient_filter,
+        )
     return fetch_account_folder_emails(account, folder_name, skip, top, proxy_url, fallback_proxy_urls)
 
 
