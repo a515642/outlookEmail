@@ -830,6 +830,7 @@ def view_email_share(token):
         share_token=token,
         share_status=status,
         account_email=account_email,
+        dompurify_asset_hash=get_dompurify_asset_hash(),
     )
 
 
