@@ -2085,6 +2085,93 @@ def api_replace_account_aliases_endpoint(account_id):
     })
 
 
+ALIAS_GENERATE_MAX_PER_CALL = 50
+ALIAS_GENERATE_MAX_TOTAL = 200
+ALIAS_GENERATE_SUFFIX_LENGTH = 6
+
+
+def build_plus_alias_address(primary_email: str, suffix: str) -> str:
+    """按 plus 寻址规则生成别名：user+tag@domain。"""
+    email_value = str(primary_email or '').strip()
+    if '@' not in email_value:
+        return ''
+    local_part, domain = email_value.split('@', 1)
+    base_local = local_part.split('+', 1)[0]
+    if not base_local or not domain:
+        return ''
+    return f'{base_local}+{suffix}@{domain}'
+
+
+@app.route('/api/accounts/<int:account_id>/aliases/generate', methods=['POST'])
+@login_required
+def api_generate_account_aliases_endpoint(account_id):
+    """基于 plus 寻址批量生成别名，并登记到账号别名列表。"""
+    account = get_account_by_id(account_id)
+    if not account:
+        return jsonify({'success': False, 'error': '账号不存在'}), 404
+
+    data = request.json or {}
+    try:
+        count = int(data.get('count', 5))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '生成数量必须是整数'}), 400
+    if count < 1 or count > ALIAS_GENERATE_MAX_PER_CALL:
+        return jsonify({
+            'success': False,
+            'error': f'生成数量需在 1-{ALIAS_GENERATE_MAX_PER_CALL} 之间',
+        }), 400
+
+    primary_email = str(account.get('email') or '').strip()
+    if '@' not in primary_email:
+        return jsonify({'success': False, 'error': '账号缺少有效的邮箱地址'}), 400
+
+    base_aliases = parse_alias_payload(data.get('aliases', account.get('aliases') or []))
+    if len(base_aliases) + count > ALIAS_GENERATE_MAX_TOTAL:
+        return jsonify({
+            'success': False,
+            'error': f'单账号别名最多 {ALIAS_GENERATE_MAX_TOTAL} 个',
+        }), 400
+
+    existing_normalized = {normalize_email_address(alias) for alias in base_aliases}
+    generated = []
+    attempts = 0
+    max_attempts = count * 20
+    while len(generated) < count and attempts < max_attempts:
+        attempts += 1
+        suffix = ''.join(
+            secrets.choice('abcdefghijklmnopqrstuvwxyz0123456789')
+            for _ in range(ALIAS_GENERATE_SUFFIX_LENGTH)
+        )
+        candidate = build_plus_alias_address(primary_email, suffix)
+        normalized = normalize_email_address(candidate)
+        if not normalized or normalized in existing_normalized:
+            continue
+        existing_normalized.add(normalized)
+        generated.append(candidate)
+
+    if not generated:
+        return jsonify({'success': False, 'error': '生成别名失败，请重试'}), 500
+
+    db = get_db()
+    success, cleaned_aliases, errors = replace_account_aliases(
+        account_id,
+        primary_email,
+        base_aliases + generated,
+        db,
+    )
+    if not success:
+        db.rollback()
+        return jsonify({'success': False, 'error': '；'.join(errors), 'errors': errors}), 400
+
+    db.commit()
+    return jsonify({
+        'success': True,
+        'message': f'已生成 {len(generated)} 个别名',
+        'generated': generated,
+        'aliases': cleaned_aliases,
+    })
+
+
 @app.route('/api/accounts', methods=['POST'])
 @login_required
 def api_add_account():

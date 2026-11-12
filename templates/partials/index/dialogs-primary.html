@@ -403,6 +403,11 @@
                             </div>
                             <div class="form-group">
                                 <label class="form-label">别名邮箱</label>
+                                <div class="input-inline edit-alias-generate-row">
+                                    <input type="number" class="form-input" id="editAliasGenerateCount" min="1" max="50" value="5" placeholder="5">
+                                    <button class="btn btn-secondary" type="button" onclick="generateAccountAliases()">生成别名</button>
+                                </div>
+                                <div class="form-hint">按 plus 寻址生成，例如 user+ab12cd@outlook.com；数量 1–50，单账号最多 200 个别名。</div>
                                 <textarea class="form-textarea edit-account-note" id="editAliases" placeholder="每行一个别名邮箱，例如&#10;alias1@example.com&#10;alias2@example.com" rows="4"></textarea>
                                 <p id="editManagedAliases" class="form-hint"></p>
                                 <div class="form-hint">支持多个别名。保存后，可直接用别名邮箱调用 API 获取该账号收到的邮件或验证码。</div>

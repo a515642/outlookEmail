@@ -1421,6 +1421,41 @@
             }
         }
 
+        async function generateAccountAliases() {
+            const accountId = Number(document.getElementById('editAccountId')?.value || 0);
+            if (!accountId) {
+                showToast('请先选择账号', 'error');
+                return;
+            }
+            const countInput = document.getElementById('editAliasGenerateCount');
+            const count = parseInt(countInput?.value || '5', 10);
+            if (!Number.isFinite(count) || count < 1 || count > 50) {
+                showToast('生成数量需在 1-50 之间', 'error');
+                return;
+            }
+            const textarea = document.getElementById('editAliases');
+            const currentAliases = textarea
+                ? textarea.value.split('\n').map(item => item.trim()).filter(Boolean)
+                : [];
+            try {
+                const response = await fetch(`/api/accounts/${accountId}/aliases/generate`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({count, aliases: currentAliases})
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error((data && data.error) || '生成别名失败');
+                }
+                if (textarea) {
+                    textarea.value = (data.aliases || []).join('\n');
+                }
+                showToast(data.message || `已生成 ${count} 个别名`, 'success');
+            } catch (error) {
+                showToast(error.message || '生成别名失败', 'error');
+            }
+        }
+
         async function updateAccount() {
             const accountId = document.getElementById('editAccountId').value;
             const oldGroupId = currentGroupId;
