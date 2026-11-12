@@ -486,7 +486,8 @@ def collect_email_share_candidate_page(
 
 
 def resolve_email_share_visible_messages(
-    account: Dict[str, Any], max_email_count: int, folder: Optional[str] = None
+    account: Dict[str, Any], max_email_count: int, folder: Optional[str] = None,
+    recipient_filter: str = '',
 ) -> Dict[str, Any]:
     """解析受限分享可见的最新邮件。
 
@@ -514,8 +515,9 @@ def resolve_email_share_visible_messages(
 
     try:
         for folder in folder_order:
+            fetch_kwargs = {'recipient_filter': recipient_filter} if recipient_filter else {}
             result = fetch_account_emails(
-                account, folder, 0, EMAIL_SHARE_CANDIDATE_PAGE_SIZE
+                account, folder, 0, EMAIL_SHARE_CANDIDATE_PAGE_SIZE, **fetch_kwargs,
             )
             if not result.get('success'):
                 app.logger.warning(
@@ -562,11 +564,13 @@ def resolve_email_share_visible_messages(
                 remaining = EMAIL_SHARE_MAX_TIED_CANDIDATES_PER_FOLDER - state['fetched_count']
                 if remaining <= 0:
                     return email_share_visible_messages_error()
+                fetch_kwargs = {'recipient_filter': recipient_filter} if recipient_filter else {}
                 result = fetch_account_emails(
                     account,
                     folder,
                     state['skip'],
                     min(EMAIL_SHARE_CANDIDATE_PAGE_SIZE, remaining),
+                    **fetch_kwargs,
                 )
                 if not result.get('success'):
                     app.logger.warning(
@@ -602,12 +606,15 @@ def resolve_email_share_visible_messages(
 
 
 def fetch_limited_email_share_emails(
-    account: Dict[str, Any], folder: str, skip: int, top: int, max_email_count: int
+    account: Dict[str, Any], folder: str, skip: int, top: int, max_email_count: int,
+    recipient_filter: str = '',
 ) -> Dict[str, Any]:
     if skip >= max_email_count:
         return {'success': True, 'emails': [], 'method': '', 'has_more': False}
 
-    visible_result = resolve_email_share_visible_messages(account, max_email_count, folder)
+    visible_result = resolve_email_share_visible_messages(
+        account, max_email_count, folder, recipient_filter,
+    )
     if not visible_result.get('success'):
         return visible_result
 
@@ -634,6 +641,7 @@ def api_create_email_share():
         data = {}
 
     account = None
+    share_recipient = ''
     account_id = data.get('account_id')
     if account_id:
         try:
@@ -643,7 +651,12 @@ def api_create_email_share():
     if not account:
         email_addr = str(data.get('email') or '').strip()
         if email_addr:
-            account = get_account_by_email(email_addr)
+            account = resolve_account_for_email_api(email_addr)
+            if account:
+                normalized_requested = normalize_email_address(email_addr)
+                normalized_account = normalize_email_address(account.get('email'))
+                if normalized_requested and normalized_requested != normalized_account:
+                    share_recipient = normalized_requested
     if not account:
         return jsonify({'success': False, 'error': '邮箱账号不存在'}), 404
 
@@ -662,9 +675,9 @@ def api_create_email_share():
         '''
         INSERT INTO email_share_links (
             account_id, token_hash, token_encrypted, expires_at, never_expires, max_email_count,
-            access_code_hash, access_code_encrypted
+            access_code_hash, access_code_encrypted, share_recipient
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             int(account['id']),
@@ -675,6 +688,7 @@ def api_create_email_share():
             max_email_count,
             hash_password(access_code) if access_code else None,
             encrypt_data(access_code) if access_code else None,
+            share_recipient,
         )
     )
     db.commit()
@@ -864,7 +878,7 @@ def api_email_share_status(token):
     return jsonify({
         'success': True,
         'status': status,
-        'email': account.get('email', ''),
+        'email': share.get('share_recipient') or account.get('email', ''),
         'never_expires': bool(share.get('never_expires')),
         'expires_at': share.get('expires_at'),
         'max_email_count': get_email_share_max_email_count(share),
@@ -888,9 +902,14 @@ def api_email_share_get_emails(token):
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, 50)
     max_email_count = get_email_share_max_email_count(share)
+    recipient_filter = str(share.get('share_recipient') or '').strip()
     if max_email_count is not None:
         return jsonify(fetch_limited_email_share_emails(
-            account, folder, skip, top, max_email_count
+            account, folder, skip, top, max_email_count, recipient_filter
+        ))
+    if recipient_filter:
+        return jsonify(fetch_account_emails(
+            account, folder, skip, top, recipient_filter=recipient_filter,
         ))
     return jsonify(fetch_account_emails(account, folder, skip, top))
 
@@ -912,8 +931,11 @@ def api_email_share_get_email_detail(token, message_id):
     method = request.args.get('method', 'graph')
     id_mode = normalize_email_share_message_id_mode(request.args.get('id_mode'))
     max_email_count = get_email_share_max_email_count(share)
+    recipient_filter = str(share.get('share_recipient') or '').strip()
     if max_email_count is not None:
-        visible_result = resolve_email_share_visible_messages(account, max_email_count, folder)
+        visible_result = resolve_email_share_visible_messages(
+            account, max_email_count, folder, recipient_filter,
+        )
         if not visible_result.get('success'):
             return jsonify(visible_result)
         visible_email = find_email_share_visible_message(
@@ -923,7 +945,7 @@ def api_email_share_get_email_detail(token, message_id):
             return jsonify({'success': False, 'error': '邮件不存在或无权访问'}), 404
         method = get_email_share_visible_message_method(visible_email)
 
-    return jsonify(fetch_email_detail_for_account(
+    detail_result = fetch_email_detail_for_account(
         account,
         message_id,
         method,
@@ -931,4 +953,9 @@ def api_email_share_get_email_detail(token, message_id):
         id_mode,
         strict_id_mode=max_email_count is not None,
         force_method=max_email_count is not None,
-    ))
+    )
+    if recipient_filter and detail_result.get('success'):
+        detail_email = detail_result.get('email') or {}
+        if not email_matches_recipient_filter(detail_email, recipient_filter):
+            return jsonify({'success': False, 'error': '邮件不存在或无权访问'}), 404
+    return jsonify(detail_result)

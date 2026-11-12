@@ -1177,6 +1177,37 @@ class EmailShareLinkTests(unittest.TestCase):
         shares = list_response.get_json()['shares']
         self.assertEqual(len(shares), 0)
 
+    def test_share_created_with_alias_filters_mailbox(self):
+        account_id = self._insert_account('shared-alias@example.com')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'INSERT INTO account_aliases (account_id, alias_email) VALUES (?, ?)',
+                (account_id, 'shared-alias+shop@example.com'),
+            )
+            db.commit()
+
+        response = self.client.post('/api/email-shares', json={
+            'email': 'shared-alias+shop@example.com',
+            'duration_minutes': 60,
+        })
+        self.assertEqual(response.status_code, 200)
+        share = response.get_json()['share']
+        token = self._token_from_share_url(share['share_url'])
+
+        captured = {}
+
+        def fetch(_account, folder, skip, top, **kwargs):
+            captured['filter'] = kwargs.get('recipient_filter')
+            return self._share_folder_result([])
+
+        anonymous = self.app.test_client()
+        with patch.object(web_outlook_app, 'fetch_account_emails', side_effect=fetch):
+            listed = anonymous.get(f'/api/share/email/{token}/emails?folder=inbox')
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(captured.get('filter'), 'shared-alias+shop@example.com')
+
 
 class EmailShareFrontendContractTests(unittest.TestCase):
     def test_admin_ui_contains_share_entry_points(self):

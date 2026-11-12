@@ -339,8 +339,10 @@ class GroupShareLinkTests(unittest.TestCase):
         token = self._token_from_share_url(share['share_url'])
         anonymous = self.app.test_client()
 
+        # 别名同样属于该账号，允许进入分享（只显示发给该别名的邮件）。
+        self.assertEqual(self._verify_email(anonymous, token, 'alias@example.com').status_code, 200)
+
         for email_addr in (
-            'alias@example.com',
             'inactive@example.com',
             'outsider@example.com',
             'not-an-email',
@@ -536,6 +538,33 @@ class GroupShareLinkTests(unittest.TestCase):
             headers={'X-CSRFToken': csrf_token},
         )
         self.assertEqual(response.status_code, 200)
+
+
+    def test_alias_email_is_accepted_and_mailbox_is_filtered(self):
+        group_id = self._create_group()
+        account_id = self._insert_account('share-alias@example.com', group_id)
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'INSERT INTO account_aliases (account_id, alias_email) VALUES (?, ?)',
+                (account_id, 'share-alias+shop@example.com'),
+            )
+            db.commit()
+
+        share = self._create_share(group_id)
+        anonymous, token = self._granted_client(share, 'share-alias+shop@example.com')
+
+        captured = {}
+
+        def fetch(_account, folder, skip, top, **kwargs):
+            captured['filter'] = kwargs.get('recipient_filter')
+            return self._share_folder_result([])
+
+        with patch.object(web_outlook_app, 'fetch_account_emails', side_effect=fetch):
+            response = anonymous.get(f'/api/share/group/{token}/emails?folder=inbox')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured.get('filter'), 'share-alias+shop@example.com')
 
 
 if __name__ == '__main__':

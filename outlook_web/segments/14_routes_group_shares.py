@@ -175,30 +175,41 @@ def is_valid_group_share_email(email_addr: Any) -> bool:
 
 
 def find_group_share_account(share: Dict[str, Any], email_addr: Any) -> Optional[Dict[str, Any]]:
-    """按主邮箱查找分组内处于启用状态的账号；别名不算匹配。"""
+    """按主邮箱、别名或 plus 地址查找分组内处于启用状态的账号。"""
     if not is_valid_group_share_email(email_addr):
         return None
     normalized = normalize_email_address(email_addr)
-    group_ids = get_group_share_member_group_ids(share)
-    if not normalized or not group_ids:
+    if not normalized:
         return None
-    placeholders = ','.join('?' * len(group_ids))
-    row = get_db().execute(
-        f'''
-        SELECT *
-        FROM accounts
-        WHERE LOWER(email) = ?
-          AND LOWER(COALESCE(status, 'active')) = 'active'
-          AND group_id IN ({placeholders})
-        LIMIT 1
-        ''',
-        [normalized] + group_ids
-    ).fetchone()
-    return resolve_account_record(row) if row else None
+    account = resolve_account_for_email_api(email_addr)
+    if not account:
+        return None
+    if str(account.get('status') or 'active').strip().lower() != 'active':
+        return None
+    group_ids = get_group_share_member_group_ids(share)
+    if not group_ids or int(account.get('group_id') or 0) not in group_ids:
+        return None
+    return account
 
 
 def group_share_grant_prefix(share: Dict[str, Any]) -> str:
     return f"{share.get('token_hash') or ''}:"
+
+
+GROUP_SHARE_GRANT_SEPARATOR = '|'
+
+
+def parse_group_share_grant(value: str, prefix: str) -> Optional[tuple[int, str]]:
+    """解析会话中的授权记录：account_id[|收件地址]。"""
+    if not isinstance(value, str) or not value.startswith(prefix):
+        return None
+    rest = value[len(prefix):]
+    account_part, _, address = rest.partition(GROUP_SHARE_GRANT_SEPARATOR)
+    try:
+        account_id = int(account_part)
+    except (TypeError, ValueError):
+        return None
+    return account_id, address.strip().lower()
 
 
 def get_group_share_granted_account_id(share: Dict[str, Any]) -> Optional[int]:
@@ -207,13 +218,22 @@ def get_group_share_granted_account_id(share: Dict[str, Any]) -> Optional[int]:
     if not isinstance(grants, list):
         return None
     for value in reversed(grants):
-        if not isinstance(value, str) or not value.startswith(prefix):
-            continue
-        try:
-            return int(value[len(prefix):])
-        except (TypeError, ValueError):
-            continue
+        parsed = parse_group_share_grant(value, prefix)
+        if parsed:
+            return parsed[0]
     return None
+
+
+def get_group_share_granted_address(share: Dict[str, Any]) -> str:
+    prefix = group_share_grant_prefix(share)
+    grants = session.get('group_share_access', [])
+    if not isinstance(grants, list):
+        return ''
+    for value in reversed(grants):
+        parsed = parse_group_share_grant(value, prefix)
+        if parsed:
+            return parsed[1]
+    return ''
 
 
 def remove_group_share_mailbox_grant(share: Dict[str, Any]) -> None:
@@ -228,7 +248,7 @@ def remove_group_share_mailbox_grant(share: Dict[str, Any]) -> None:
     ]
 
 
-def grant_group_share_mailbox(share: Dict[str, Any], account_id: int) -> None:
+def grant_group_share_mailbox(share: Dict[str, Any], account_id: int, requested_email: str = '') -> None:
     prefix = group_share_grant_prefix(share)
     grants = session.get('group_share_access', [])
     if not isinstance(grants, list):
@@ -237,9 +257,13 @@ def grant_group_share_mailbox(share: Dict[str, Any], account_id: int) -> None:
         value for value in grants
         if not (isinstance(value, str) and value.startswith(prefix))
     ]
+    entry = f"{prefix}{int(account_id)}"
+    normalized_requested = normalize_email_address(requested_email)
+    if normalized_requested:
+        entry += f"{GROUP_SHARE_GRANT_SEPARATOR}{normalized_requested}"
     # 限制已验证链接数，避免 Flask 的 Cookie Session 随访问次数无限增长。
     session['group_share_access'] = (
-        grants + [f"{prefix}{int(account_id)}"]
+        grants + [entry]
     )[-GROUP_SHARE_MAX_VERIFIED_LINKS:]
 
 
@@ -258,6 +282,11 @@ def get_group_share_granted_account(share: Dict[str, Any]) -> Optional[Dict[str,
     if int(account.get('group_id') or 0) not in group_ids:
         remove_group_share_mailbox_grant(share)
         return None
+    requested = get_group_share_granted_address(share)
+    normalized_requested = normalize_email_address(requested)
+    normalized_account = normalize_email_address(account.get('email'))
+    if normalized_requested and normalized_requested != normalized_account:
+        account['_share_recipient_filter'] = requested
     return account
 
 
@@ -605,7 +634,7 @@ def api_group_share_status(token):
         'success': True,
         'status': status,
         'group_name': share.get('group_name', ''),
-        'email': account.get('email', ''),
+        'email': account.get('_share_recipient_filter') or account.get('email', ''),
         'never_expires': bool(share.get('never_expires')),
         'expires_at': share.get('expires_at'),
         'max_email_count': get_email_share_max_email_count(share),
@@ -639,12 +668,12 @@ def api_group_share_verify_email(token):
         }), 403
 
     reset_group_share_attempts(attempt_key)
-    grant_group_share_mailbox(share, int(account['id']))
+    grant_group_share_mailbox(share, int(account['id']), str(email_addr or ''))
     if should_touch_email_share_access(share):
         touch_group_share_access(int(share['id']))
     return jsonify({
         'success': True,
-        'email': account.get('email', ''),
+        'email': normalize_email_address(email_addr) or account.get('email', ''),
         'group_name': share.get('group_name', ''),
     })
 
@@ -681,9 +710,14 @@ def api_group_share_get_emails(token):
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, 50)
     max_email_count = get_email_share_max_email_count(share)
+    recipient_filter = str(account.get('_share_recipient_filter') or '').strip()
     if max_email_count is not None:
         return jsonify(fetch_limited_email_share_emails(
-            account, folder, skip, top, max_email_count
+            account, folder, skip, top, max_email_count, recipient_filter
+        ))
+    if recipient_filter:
+        return jsonify(fetch_account_emails(
+            account, folder, skip, top, recipient_filter=recipient_filter,
         ))
     return jsonify(fetch_account_emails(account, folder, skip, top))
 
@@ -701,8 +735,11 @@ def api_group_share_get_email_detail(token, message_id):
     method = request.args.get('method', 'graph')
     id_mode = normalize_email_share_message_id_mode(request.args.get('id_mode'))
     max_email_count = get_email_share_max_email_count(share)
+    recipient_filter = str(account.get('_share_recipient_filter') or '').strip()
     if max_email_count is not None:
-        visible_result = resolve_email_share_visible_messages(account, max_email_count, folder)
+        visible_result = resolve_email_share_visible_messages(
+            account, max_email_count, folder, recipient_filter,
+        )
         if not visible_result.get('success'):
             return jsonify(visible_result)
         visible_email = find_email_share_visible_message(
@@ -712,7 +749,7 @@ def api_group_share_get_email_detail(token, message_id):
             return jsonify({'success': False, 'error': '邮件不存在或无权访问'}), 404
         method = get_email_share_visible_message_method(visible_email)
 
-    return jsonify(fetch_email_detail_for_account(
+    detail_result = fetch_email_detail_for_account(
         account,
         message_id,
         method,
@@ -720,4 +757,9 @@ def api_group_share_get_email_detail(token, message_id):
         id_mode,
         strict_id_mode=max_email_count is not None,
         force_method=max_email_count is not None,
-    ))
+    )
+    if recipient_filter and detail_result.get('success'):
+        detail_email = detail_result.get('email') or {}
+        if not email_matches_recipient_filter(detail_email, recipient_filter):
+            return jsonify({'success': False, 'error': '邮件不存在或无权访问'}), 404
+    return jsonify(detail_result)

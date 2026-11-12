@@ -1648,6 +1648,10 @@ def init_db():
         cursor.execute('ALTER TABLE email_share_links ADD COLUMN access_code_hash TEXT')
     if 'access_code_encrypted' not in email_share_columns:
         cursor.execute('ALTER TABLE email_share_links ADD COLUMN access_code_encrypted TEXT')
+    if 'share_recipient' not in email_share_columns:
+        cursor.execute(
+            "ALTER TABLE email_share_links ADD COLUMN share_recipient TEXT NOT NULL DEFAULT ''"
+        )
 
     # 创建分组分享链接表
     cursor.execute('''
