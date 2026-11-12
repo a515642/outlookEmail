@@ -1103,14 +1103,15 @@ class ProjectRuntimeTests(unittest.TestCase):
             ]
         )
 
-    def test_account_search_rejects_more_than_200_keywords(self):
-        response = self.client.get('/api/accounts/search', query_string={
-            'q': ' '.join(f'keyword-limit-{index}' for index in range(201)),
+    def test_account_search_rejects_more_than_max_keywords(self):
+        max_terms = web_outlook_app.ACCOUNT_SEARCH_MAX_TERMS
+        response = self.client.post('/api/accounts/search', json={
+            'q': '\n'.join(f'keyword-limit-{index}' for index in range(max_terms + 1)),
         })
         self.assertEqual(response.status_code, 400)
         payload = response.get_json()
         self.assertFalse(payload['success'])
-        self.assertEqual(payload['error'], '搜索关键词最多支持 200 个')
+        self.assertEqual(payload['error'], f'搜索关键词最多支持 {max_terms} 个')
 
     def test_account_search_email_list_combines_group_scope_and_tag_filter(self):
         target_group_id = self._create_group('组合搜索分组')

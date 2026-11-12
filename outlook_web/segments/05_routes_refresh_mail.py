@@ -1,7 +1,8 @@
 from __future__ import annotations
 from outlook_web.icloud_mail import belongs_to, recipient_addresses
 
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
+import os
 import secrets
 import threading
 import time
@@ -4006,8 +4007,171 @@ def record_outlook_mail_channel(account: Dict[str, Any], channel: str) -> None:
         pass
 
 
+# ==================== 邮件上游并发保护 ====================
+# 上游（Graph / IMAP）卡顿时单次请求可能占用线程 30-45 秒。这里限制同时进行的
+# 上游调用数量，并把同一账号同一查询的并发请求合并成一次，避免少量慢请求占满
+# gunicorn 线程池，导致首页、静态资源和健康检查一起排队。
+MAIL_GUARD_MAX_CONCURRENCY = max(1, int(os.getenv('MAIL_UPSTREAM_MAX_CONCURRENCY', '8') or '8'))
+MAIL_GUARD_QUEUE_WAIT_SECONDS = max(0.1, float(os.getenv('MAIL_UPSTREAM_QUEUE_WAIT_SECONDS', '2') or '2'))
+MAIL_GUARD_INFLIGHT_WAIT_SECONDS = max(1.0, float(os.getenv('MAIL_INFLIGHT_WAIT_SECONDS', '20') or '20'))
+MAIL_GUARD_FAILURE_THRESHOLD = max(1, int(os.getenv('MAIL_GUARD_FAILURE_THRESHOLD', '3') or '3'))
+MAIL_GUARD_COOLDOWN_SECONDS = max(1.0, float(os.getenv('MAIL_GUARD_COOLDOWN_SECONDS', '60') or '60'))
+
+mail_upstream_gate = threading.BoundedSemaphore(MAIL_GUARD_MAX_CONCURRENCY)
+mail_inflight_futures: Dict[Any, Future] = {}
+mail_inflight_lock = threading.Lock()
+mail_failure_state: Dict[str, tuple] = {}
+mail_failure_lock = threading.Lock()
+
+
+def mail_guard_active() -> bool:
+    """测试环境默认跳过并发保护，避免 mock 场景互相影响。"""
+    try:
+        if app.config.get('TESTING') and os.getenv('MAIL_GUARD_TESTING', '0') != '1':
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def reset_mail_guard_state() -> None:
+    """清空并发保护状态（测试或排障用）。"""
+    with mail_inflight_lock:
+        mail_inflight_futures.clear()
+    with mail_failure_lock:
+        mail_failure_state.clear()
+
+
+def mail_guard_account_key(account: Dict[str, Any]) -> str:
+    try:
+        account_id = int(account.get('id'))
+        if account_id > 0:
+            return f'id:{account_id}'
+    except (TypeError, ValueError):
+        pass
+    return 'email:' + str(account.get('email') or '').strip().lower()
+
+
+def mail_guard_error(code: str, message: str, status: int = 503) -> Dict[str, Any]:
+    # 这里不走 build_error_payload，避免限流/冷却期间把 error 日志刷满。
+    return {
+        'success': False,
+        'error': {
+            'code': code,
+            'message': message,
+            'type': 'MailGuardError',
+            'status': status,
+            'details': '',
+            'trace_id': generate_trace_id(),
+        },
+    }
+
+
+def mail_guard_cooldown_left(account: Dict[str, Any]) -> float:
+    key = mail_guard_account_key(account)
+    now = time.monotonic()
+    with mail_failure_lock:
+        _, opened_until = mail_failure_state.get(key, (0, 0.0))
+    return max(0.0, opened_until - now)
+
+
+def record_mail_guard_outcome(account: Dict[str, Any], success: bool) -> None:
+    key = mail_guard_account_key(account)
+    now = time.monotonic()
+    with mail_failure_lock:
+        if success:
+            mail_failure_state.pop(key, None)
+            return
+        failures, opened_until = mail_failure_state.get(key, (0, 0.0))
+        if opened_until > now:
+            return
+        failures += 1
+        opened_until = 0.0
+        if failures >= MAIL_GUARD_FAILURE_THRESHOLD:
+            failures = 0
+            opened_until = now + MAIL_GUARD_COOLDOWN_SECONDS
+            try:
+                app.logger.warning(
+                    '[mail-guard] 账号连续失败，冷却 %ss: %s',
+                    int(MAIL_GUARD_COOLDOWN_SECONDS), key,
+                )
+            except Exception:
+                pass
+        mail_failure_state[key] = (failures, opened_until)
+
+
+def run_with_mail_guard(account: Dict[str, Any], inflight_key: tuple, work) -> Dict[str, Any]:
+    if not mail_guard_active():
+        return work()
+
+    cooldown_left = mail_guard_cooldown_left(account)
+    if cooldown_left > 0:
+        return mail_guard_error(
+            'EMAIL_FETCH_COOLDOWN',
+            f'该账号连续获取失败，已暂停 {int(cooldown_left) + 1} 秒后重试',
+        )
+
+    with mail_inflight_lock:
+        future = mail_inflight_futures.get(inflight_key)
+        is_leader = future is None
+        if is_leader:
+            future = Future()
+            mail_inflight_futures[inflight_key] = future
+
+    if not is_leader:
+        # 同一账号同一查询已经在执行，直接复用结果，不再重复请求上游。
+        try:
+            return future.result(timeout=MAIL_GUARD_INFLIGHT_WAIT_SECONDS)
+        except FutureTimeoutError:
+            return mail_guard_error('EMAIL_FETCH_BUSY', '服务器正在处理较多邮件请求，请稍后重试')
+        except Exception:
+            return mail_guard_error('EMAIL_FETCH_RETRY', '邮件请求失败，请稍后重试')
+
+    result = None
+    try:
+        if not mail_upstream_gate.acquire(timeout=MAIL_GUARD_QUEUE_WAIT_SECONDS):
+            result = mail_guard_error('EMAIL_FETCH_BUSY', '服务器正在处理较多邮件请求，请稍后重试')
+        else:
+            try:
+                result = work()
+            finally:
+                mail_upstream_gate.release()
+        record_mail_guard_outcome(account, bool(result and result.get('success')))
+        future.set_result(result)
+        return result
+    except BaseException as exc:
+        record_mail_guard_outcome(account, False)
+        try:
+            future.set_exception(exc)
+        except Exception:
+            pass
+        raise
+    finally:
+        with mail_inflight_lock:
+            if mail_inflight_futures.get(inflight_key) is future:
+                mail_inflight_futures.pop(inflight_key, None)
+
+
 def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
                                 proxy_url: str = '', fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
+    folder_name = normalize_folder_name(folder)
+    if folder_name not in VALID_MAIL_FOLDERS or folder_name == 'all':
+        return {
+            'success': False,
+            'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS - {"all"} | {"all"}))}'
+        }
+    inflight_key = ('list', mail_guard_account_key(account), folder_name, int(skip), int(top))
+    return run_with_mail_guard(
+        account,
+        inflight_key,
+        lambda: _fetch_account_folder_emails_unlocked(
+            account, folder_name, skip, top, proxy_url, fallback_proxy_urls,
+        ),
+    )
+
+
+def _fetch_account_folder_emails_unlocked(account: Dict[str, Any], folder: str, skip: int, top: int,
+                                          proxy_url: str = '', fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
     folder_name = normalize_folder_name(folder)
     if folder_name not in VALID_MAIL_FOLDERS or folder_name == 'all':
         return {
@@ -4553,6 +4717,34 @@ def normalize_email_detail_error(error: Any, fallback_message: str = '获取邮�
 def fetch_email_detail_for_account(account, message_id, method='graph', folder='inbox',
                                    id_mode='', prefer_local=False, strict_id_mode=False,
                                    force_method=False):
+    if account.get('icloud_address'):
+        # iCloud 隐藏地址需要先取主账号详情再校验归属；外层不占并发名额，避免嵌套等待。
+        return _fetch_email_detail_for_account_unlocked(
+            account, message_id, method, folder, id_mode,
+            prefer_local=prefer_local, strict_id_mode=strict_id_mode, force_method=force_method,
+        )
+    inflight_key = (
+        'detail',
+        mail_guard_account_key(account),
+        str(message_id or ''),
+        normalize_folder_name(folder),
+        str(method or '').strip().lower(),
+        str(id_mode or '').strip().lower(),
+        bool(prefer_local),
+    )
+    return run_with_mail_guard(
+        account,
+        inflight_key,
+        lambda: _fetch_email_detail_for_account_unlocked(
+            account, message_id, method, folder, id_mode,
+            prefer_local=prefer_local, strict_id_mode=strict_id_mode, force_method=force_method,
+        ),
+    )
+
+
+def _fetch_email_detail_for_account_unlocked(account, message_id, method='graph', folder='inbox',
+                                             id_mode='', prefer_local=False, strict_id_mode=False,
+                                             force_method=False):
     if account.get('icloud_address'):
         primary = dict(account)
         address = primary.pop('icloud_address')

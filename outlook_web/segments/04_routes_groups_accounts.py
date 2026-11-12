@@ -148,6 +148,14 @@ def extension_login(token):
     return redirect(normalize_extension_next_path(request.args.get('next') or payload.get('next') or '/'))
 
 
+@app.route('/healthz')
+def healthz():
+    """轻量健康检查：不访问数据库与上游，避免邮件请求积压时误判。"""
+    response = jsonify({'status': 'ok', 'version': APP_VERSION})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @app.route('/favicon.ico')
 def favicon():
     """返回内联 SVG favicon，避免 500 错误"""

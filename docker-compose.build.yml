@@ -27,9 +27,9 @@ services:
     # 镜像标签建议用 mutable tag（latest / main / dev）以便自更新；如用固定版本号（v2.0.x）则无更新能力
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:5000/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5000/healthz || exit 1"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 15s  # 给启动留缓冲，避免健康检查未就绪时误判
 
