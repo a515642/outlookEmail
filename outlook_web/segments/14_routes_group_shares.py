@@ -575,6 +575,8 @@ def view_group_share(token):
         share_status=status,
         group_name=group_name,
         account_email='',
+        dompurify_asset_hash=get_dompurify_asset_hash(),
+        share_css_hash=compute_static_assets_hash(('css/email-share.css',)),
     )
 
 

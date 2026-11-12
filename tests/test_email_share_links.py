@@ -1250,6 +1250,12 @@ class EmailShareFrontendContractTests(unittest.TestCase):
         self.assertIn('renderShareVisibilityHint(status.max_email_count)', share_js)
         self.assertIn('收件箱和垃圾邮件分别仅显示各自最新 ${count} 封邮件', share_js)
         self.assertIn('.overlay-screen[hidden]', share_css)
+        # 移动端列表页不得溢出：高度使用 dvh，头部允许收缩。
+        self.assertIn('height: 100dvh', share_css)
+        self.assertIn('.header-center', share_css)
+        self.assertIn('overflow-x: hidden', share_css)
+        self.assertIn('.email-item-btn', share_css)
+        self.assertNotIn('width: 100vw', share_css)
         self.assertNotIn("shareStatusAttr !== 'active'", share_js)
         self.assertNotIn('/api/emails/delete', share_js)
         self.assertNotIn('/api/email-shares', share_js)

@@ -15,7 +15,7 @@
     <script src="{{ url_for('static', filename='vendor/dompurify/purify.min.js', v=dompurify_asset_hash) }}"></script>
     <!-- Lucide Icons -->
     <script src="https://cdn.jsdelivr.net/npm/lucide/dist/umd/lucide.min.js"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/email-share.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/email-share.css', v=share_css_hash | default('')) }}">
 </head>
 
 <body data-share-token="{{ share_token }}" data-share-status="{{ share_status }}" data-share-kind="{{ share_kind | default('email') }}" data-group-name="{{ group_name | default('') }}">

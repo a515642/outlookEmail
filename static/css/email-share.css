@@ -162,7 +162,10 @@ button {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    width: 100vw;
+    height: 100dvh;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
 }
 
 /* Header */
@@ -183,6 +186,13 @@ button {
     display: flex;
     align-items: center;
     gap: 16px;
+}
+
+.header-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
 }
 
 .logo-container {
@@ -231,6 +241,7 @@ button {
     border-radius: 99px;
     border: 1px solid var(--border-color);
     max-width: 320px;
+    min-width: 0;
     transition: var(--transition-fast);
     cursor: pointer;
     user-select: none;
@@ -312,6 +323,7 @@ button {
     flex-direction: column;
     gap: 1px;
     min-width: 0;
+    flex: 1 1 auto;
 }
 
 .user-email {
@@ -1251,5 +1263,106 @@ button {
 
     .switch-mailbox-btn span {
         display: none;
+    }
+
+    /* 移动端头部压缩，避免长邮箱/状态文字撑出屏幕 */
+    .app-header {
+        padding: 0 12px;
+        gap: 8px;
+    }
+
+    .header-left {
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    .header-center {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .header-right {
+        gap: 6px;
+        flex-shrink: 0;
+    }
+
+    .logo-text {
+        font-size: 15px;
+    }
+
+    .logo-text .share-badge {
+        display: none;
+    }
+
+    .user-pill {
+        max-width: 100%;
+        min-width: 0;
+        padding: 5px 10px;
+    }
+
+    .user-email {
+        max-width: 42vw;
+    }
+
+    .status-indicator {
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+
+    .email-list-panel {
+        min-width: 0;
+    }
+
+    .email-list {
+        overflow-x: hidden;
+    }
+
+    .email-item-btn {
+        padding: 12px;
+        gap: 10px;
+    }
+
+    .email-item-avatar {
+        width: 32px;
+        height: 32px;
+        font-size: 13px;
+    }
+
+    .list-search-container {
+        padding: 12px;
+    }
+
+    .toast-notification {
+        max-width: calc(100vw - 24px);
+    }
+}
+
+@media (max-width: 480px) {
+    /* 极窄屏优先保证邮箱地址可读：隐藏 Logo 文字，压缩状态区 */
+    .logo-text {
+        display: none;
+    }
+
+    .logo-container {
+        gap: 0;
+    }
+
+    .header-right {
+        gap: 4px;
+    }
+
+    .status-indicator {
+        padding: 4px 7px;
+        font-size: 10px;
+    }
+
+    .user-pill {
+        padding: 4px 8px;
+        gap: 6px;
+    }
+
+    .user-email {
+        max-width: none;
+        font-size: 12px;
     }
 }
